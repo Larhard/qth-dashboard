@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,7 +10,6 @@ import '../services/declination_service.dart';
 import '../utils/coordinate_utils.dart';
 import '../utils/geo_utils.dart';
 import '../widgets/arrow_widget.dart';
-import '../widgets/hold_to_clear_button.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,24 +18,20 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   // ── Constants ─────────────────────────────────────────────────────────────
-  /// Speed above which GPS course replaces compass (m/s ≈ 5.4 km/h).
-  static const _gpsThresholdMs = 1.5;
-  /// Minimum ms between compass setState calls (~12 Hz).
-  static const _compassIntervalMs = 80;
-  /// Only recalculate nearest city after moving this many metres.
+  static const _gpsThresholdMs = 1.5;   // m/s ≈ 5.4 km/h
+  static const _compassIntervalMs = 80; // ~12 Hz max compass redraws
   static const _cityRecalcThresholdM = 100.0;
 
-  // ── Streams ───────────────────────────────────────────────────────────────
+  // ── GPS / compass streams ─────────────────────────────────────────────────
   StreamSubscription<Position>? _posSub;
   StreamSubscription<CompassEvent>? _compassSub;
 
-  // ── State ─────────────────────────────────────────────────────────────────
+  // ── App state ─────────────────────────────────────────────────────────────
   Position? _position;
-  /// Magnetic heading corrected for declination → true north.
   double _compassHeading = 0;
-  /// GPS course; only updated when speed ≥ threshold to avoid noise.
   double? _lastValidGpsHeading;
   NearestCity? _nearestCity;
   Position? _lastCityCalcPos;
@@ -43,27 +39,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _error;
   int _lastCompassMs = 0;
 
-  // ── Derived getters ───────────────────────────────────────────────────────
+  // ── MOB clear animation ───────────────────────────────────────────────────
+  late final AnimationController _mobClearCtrl;
+
+  // ── Derived ───────────────────────────────────────────────────────────────
   bool get _usingGps {
     final p = _position;
     return p != null && p.speed >= _gpsThresholdMs && !p.heading.isNaN && p.heading >= 0;
   }
 
   double get _heading => _usingGps ? _position!.heading : _compassHeading;
-
-  /// The other source's heading, used for the dimmed secondary arrow.
   double? get _secondaryHeading => _usingGps ? _compassHeading : _lastValidGpsHeading;
-
-  Color get _headingColor =>
-      _usingGps ? const Color(0xFF69F0AE) : Colors.white;
-
+  Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
   String get _sourceLabel => _usingGps ? 'TRUE · GPS' : 'TRUE · MAG';
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _mobClearCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..addStatusListener((s) {
+        if (s == AnimationStatus.completed) {
+          _mobClearCtrl.reset();
+          HapticFeedback.heavyImpact();
+          _clearMob();
+        }
+      });
+
     _loadMob();
     _init();
   }
@@ -71,22 +77,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _mobClearCtrl.dispose();
     _posSub?.cancel();
     _compassSub?.cancel();
     super.dispose();
   }
 
-  /// Pause compass when backgrounded; resume on foreground. Saves battery.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       _compassSub?.pause();
+      // If user backgrounds the app mid-hold, cancel the clear animation.
+      _cancelMobClear();
     } else if (state == AppLifecycleState.resumed) {
       _compassSub?.resume();
     }
   }
 
-  // ── MOB persistence ──────────────────────────────────────────────────────
+  // ── MOB persistence ───────────────────────────────────────────────────────
   Future<void> _loadMob() async {
     final p = await SharedPreferences.getInstance();
     final lat = p.getDouble('mob_lat');
@@ -108,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await p.remove('mob_lon');
   }
 
-  // ── Stream init ──────────────────────────────────────────────────────────
+  // ── Stream init ───────────────────────────────────────────────────────────
   Future<void> _init() async {
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
@@ -121,24 +129,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _posSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high, // good accuracy, less drain than "best"
-        distanceFilter: 2,               // only fire when moved ≥ 2 m
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 2, // fire only on ≥ 2 m movement
       ),
     ).listen((pos) {
-      // Cache valid GPS course (above threshold only) to avoid noise artifacts.
       if (pos.speed >= _gpsThresholdMs && !pos.heading.isNaN && pos.heading >= 0) {
         _lastValidGpsHeading = pos.heading;
       }
 
-      // Throttle city recalc to every 100 m.
       final needsCityUpdate = _lastCityCalcPos == null ||
           Geolocator.distanceBetween(
-                _lastCityCalcPos!.latitude,
-                _lastCityCalcPos!.longitude,
-                pos.latitude,
-                pos.longitude,
-              ) >=
-              _cityRecalcThresholdM;
+                _lastCityCalcPos!.latitude, _lastCityCalcPos!.longitude,
+                pos.latitude, pos.longitude,
+              ) >= _cityRecalcThresholdM;
 
       if (needsCityUpdate) {
         _lastCityCalcPos = pos;
@@ -148,14 +151,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (mounted) setState(() => _position = pos);
       }
 
-      // Declination update is fire-and-forget; no rebuild needed here.
       DeclinationService.instance.update(pos.latitude, pos.longitude, pos.altitude);
     });
 
     _compassSub = FlutterCompass.events?.listen((e) {
       final h = e.heading;
       if (h == null) return;
-      // Throttle to _compassIntervalMs to avoid excess redraws.
       final now = DateTime.now().millisecondsSinceEpoch;
       if (now - _lastCompassMs < _compassIntervalMs) return;
       _lastCompassMs = now;
@@ -175,7 +176,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _clearMob() {
     _deleteMob();
-    setState(() => _mob = null);
+    if (mounted) setState(() => _mob = null);
+  }
+
+  void _startMobClear() {
+    if (_mob != null && !_mobClearCtrl.isAnimating) {
+      _mobClearCtrl.forward();
+    }
+  }
+
+  void _cancelMobClear() {
+    if (_mobClearCtrl.value > 0 || _mobClearCtrl.isAnimating) {
+      final ms = (_mobClearCtrl.value * 400).round() + 80;
+      _mobClearCtrl.animateTo(
+        0.0,
+        duration: Duration(milliseconds: ms),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   void _copyToClipboard(String text) {
@@ -183,8 +201,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     HapticFeedback.lightImpact();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(text,
-          style: const TextStyle(color: Colors.white60, fontSize: 13),
-          maxLines: 2),
+          style: const TextStyle(color: Colors.white60, fontSize: 13), maxLines: 2),
       backgroundColor: const Color(0xFF1C1C1C),
       duration: const Duration(milliseconds: 1200),
       behavior: SnackBarBehavior.floating,
@@ -255,7 +272,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Divider(color: Color(0xFF1A1A1A), height: 1),
       );
 
-  // ── Heading ──────────────────────────────────────────────────────────────
+  // ── Heading ───────────────────────────────────────────────────────────────
   Widget _headingSection(Position pos) {
     final color = _headingColor;
     final primary = _heading;
@@ -272,48 +289,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         width: 80,
         height: 80,
         child: Stack(alignment: Alignment.center, children: [
-          // Secondary arrow — dimmed, only when we have a value for it.
           if (secondary != null)
             Opacity(
               opacity: 0.18,
               child: ArrowWidget(bearingDeg: secondary, color: Colors.white, size: 80),
             ),
-          // Primary arrow — full color.
           ArrowWidget(bearingDeg: primary, color: color, size: 80),
         ]),
       ),
       const SizedBox(width: 20),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(
-          '${primary.round()}°',
-          style: TextStyle(
-            fontSize: 64,
-            fontWeight: FontWeight.w900,
-            color: color,
-            height: 1.0,
-          ),
-        ),
-        Text(
-          speedStr,
-          style: const TextStyle(
-            fontSize: 17,
-            color: Color(0xFF555555),
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-        ),
-        Text(
-          _sourceLabel,
-          style: const TextStyle(
-            fontSize: 12,
-            color: Color(0xFF3A3A3A),
-            letterSpacing: 2.5,
-          ),
-        ),
+        Text('${primary.round()}°',
+            style: TextStyle(
+                fontSize: 64, fontWeight: FontWeight.w900, color: color, height: 1.0)),
+        Text(speedStr,
+            style: const TextStyle(
+                fontSize: 17,
+                color: Color(0xFF555555),
+                fontFeatures: [FontFeature.tabularFigures()])),
+        Text(_sourceLabel,
+            style: const TextStyle(
+                fontSize: 12, color: Color(0xFF3A3A3A), letterSpacing: 2.5)),
       ]),
     ]);
   }
 
-  // ── Coordinates ──────────────────────────────────────────────────────────
+  // ── Coordinates ───────────────────────────────────────────────────────────
   Widget _coordsSection(Position pos) {
     final latStr = formatLat(pos.latitude);
     final lonStr = formatLon(pos.longitude);
@@ -327,7 +328,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Tap the coordinate block to copy both lines.
       GestureDetector(
         onTap: () => _copyToClipboard('$latStr\n$lonStr'),
         behavior: HitTestBehavior.opaque,
@@ -338,24 +338,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ]),
       ),
       const SizedBox(height: 10),
-      // Tap the locator to copy just the locator string.
       GestureDetector(
         onTap: () => _copyToClipboard(locStr),
-        child: Text(
-          locStr,
-          style: const TextStyle(
-            fontSize: 28,
-            color: Color(0xFF69F0AE),
-            fontWeight: FontWeight.w700,
-            letterSpacing: 4,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-        ),
+        child: Text(locStr,
+            style: const TextStyle(
+                fontSize: 28,
+                color: Color(0xFF69F0AE),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 4,
+                fontFeatures: [FontFeature.tabularFigures()])),
       ),
     ]);
   }
 
-  // ── City ─────────────────────────────────────────────────────────────────
+  // ── City ──────────────────────────────────────────────────────────────────
   Widget _citySection(NearestCity nc) {
     return Row(children: [
       ArrowWidget(bearingDeg: nc.bearingDeg, color: const Color(0xFFFFD740), size: 60),
@@ -363,9 +359,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(nc.city.name,
             style: const TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFFFFD740))),
+                fontSize: 30, fontWeight: FontWeight.w700, color: Color(0xFFFFD740))),
         Row(children: [
           Text('${nc.bearingDeg.round()}°',
               style: const TextStyle(
@@ -384,7 +378,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ]);
   }
 
-  // ── MOB ──────────────────────────────────────────────────────────────────
+  // ── MOB ───────────────────────────────────────────────────────────────────
   Widget _mobSection(Position pos) {
     if (_mob == null) {
       return SizedBox(
@@ -409,57 +403,135 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final b = bearing(pos.latitude, pos.longitude, mob.lat, mob.lon);
     final d = haversineKm(pos.latitude, pos.longitude, mob.lat, mob.lon);
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFD32F2F), width: 1.5),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // Arrow pointing to MOB
-        ArrowWidget(bearingDeg: b, color: const Color(0xFFFF5252), size: 60),
-        const SizedBox(width: 14),
-        // Info block
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('MOB',
-                style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFFFF5252),
-                    letterSpacing: 3)),
-            Row(children: [
-              Text('${b.round()}°',
-                  style: const TextStyle(
-                      fontSize: 20,
-                      color: Color(0xFFFF1744),
-                      fontFeatures: [FontFeature.tabularFigures()])),
-              const SizedBox(width: 14),
-              Text(formatDistance(d),
-                  style: const TextStyle(
-                      fontSize: 20,
-                      color: Color(0xFFFF5252),
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: [FontFeature.tabularFigures()])),
-            ]),
-            const SizedBox(height: 4),
-            // MOB point coordinates
-            Text(formatLat(mob.lat),
-                style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF883333),
-                    fontFeatures: [FontFeature.tabularFigures()])),
-            Text(formatLon(mob.lon),
-                style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF883333),
-                    fontFeatures: [FontFeature.tabularFigures()])),
-          ]),
+    // The entire card is the hold target. Listener reacts to raw pointer
+    // events — no GestureDetector delay, no gesture-arena conflicts.
+    return Listener(
+      onPointerDown: (_) => _startMobClear(),
+      onPointerUp: (_) => _cancelMobClear(),
+      onPointerCancel: (_) => _cancelMobClear(),
+      child: AnimatedBuilder(
+        animation: _mobClearCtrl,
+        builder: (ctx, child) => CustomPaint(
+          painter: _MobBorderPainter(_mobClearCtrl.value),
+          child: child,
         ),
-        // Hold-to-clear button
-        HoldToClearButton(onConfirmed: _clearMob),
-      ]),
+        // child is rebuilt only when _mob / pos changes, not on every
+        // animation tick — the painter handles the border independently.
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Bearing row ────────────────────────────────────────────
+              Row(children: [
+                ArrowWidget(bearingDeg: b, color: const Color(0xFFFF5252), size: 60),
+                const SizedBox(width: 14),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('MOB',
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFFFF5252),
+                          letterSpacing: 3)),
+                  Row(children: [
+                    Text('${b.round()}°',
+                        style: const TextStyle(
+                            fontSize: 20,
+                            color: Color(0xFFFF1744),
+                            fontFeatures: [FontFeature.tabularFigures()])),
+                    const SizedBox(width: 14),
+                    Text(formatDistance(d),
+                        style: const TextStyle(
+                            fontSize: 20,
+                            color: Color(0xFFFF5252),
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: [FontFeature.tabularFigures()])),
+                  ]),
+                ]),
+              ]),
+              // ── MOB point coordinates ──────────────────────────────────
+              const SizedBox(height: 6),
+              Text(formatLat(mob.lat),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF883333),
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              Text(formatLon(mob.lon),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF883333),
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              // ── Hold-to-clear hint ─────────────────────────────────────
+              const SizedBox(height: 8),
+              const Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  'HOLD 3s TO CLEAR',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF4A1A1A),
+                      letterSpacing: 1.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
+}
+
+// ── MOB card border painter ────────────────────────────────────────────────────
+//
+// At rest   : thin dim-red rounded-rect outline.
+// On hold   : bright red arc fills the border clockwise from the top-left
+//             corner; stroke thickens so progress is clearly visible.
+//
+class _MobBorderPainter extends CustomPainter {
+  final double progress; // 0.0 → 1.0
+
+  const _MobBorderPainter(this.progress);
+
+  static const _trackWidth = 1.5;
+  static const _arcWidth = 5.5;
+  static const _borderRadius = Radius.circular(6.0);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Inset so the thick arc is never clipped by widget bounds.
+    const inset = _arcWidth / 2 + 1.0;
+    final rrect = RRect.fromLTRBR(
+      inset, inset, size.width - inset, size.height - inset, _borderRadius);
+
+    // ── Background track (always drawn) ────────────────────────────────────
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _trackWidth
+        ..color = progress > 0
+            ? const Color(0xFF4A1515) // slightly lighter while holding
+            : const Color(0xFF3D1212),
+    );
+
+    if (progress <= 0) return;
+
+    // ── Progress arc (clockwise fill) ──────────────────────────────────────
+    final path = Path()..addRRect(rrect);
+    final metric = path.computeMetrics().first;
+    final arc = metric.extractPath(0, metric.length * progress.clamp(0.0, 1.0));
+
+    canvas.drawPath(
+      arc,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _arcWidth
+        ..color = Color.lerp(
+            const Color(0xFFFF3333), const Color(0xFFFF6666), progress)!
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_MobBorderPainter old) => old.progress != progress;
 }

@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 /// Round button that must be held for [holdDuration] before firing [onConfirmed].
-/// A circular progress ring fills during the hold and rewinds on release.
+/// Progress starts the instant the finger touches (no long-press dead-zone).
+/// Releasing before completion snaps the ring back quickly.
 class HoldToClearButton extends StatefulWidget {
   final VoidCallback onConfirmed;
   final Duration holdDuration;
@@ -40,21 +41,26 @@ class _HoldToClearButtonState extends State<HoldToClearButton>
     super.dispose();
   }
 
-  void _start(LongPressStartDetails _) => _ctrl.forward();
+  void _start() {
+    if (!_ctrl.isAnimating) _ctrl.forward();
+  }
 
   void _cancel() {
-    // Snap back quickly — duration proportional to how far it filled.
-    final snapMs = (_ctrl.value * 400).round() + 80;
-    _ctrl.animateTo(0,
-        duration: Duration(milliseconds: snapMs), curve: Curves.easeOut);
+    if (_ctrl.value > 0 || _ctrl.isAnimating) {
+      final ms = (_ctrl.value * 400).round() + 80;
+      _ctrl.animateTo(0,
+          duration: Duration(milliseconds: ms), curve: Curves.easeOut);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPressStart: _start,
-      onLongPressEnd: (_) => _cancel(),
-      onLongPressCancel: _cancel,
+    // Listener fires on raw pointer events — no 500 ms GestureDetector delay,
+    // no competition with ancestor gesture recognisers.
+    return Listener(
+      onPointerDown: (_) => _start(),
+      onPointerUp: (_) => _cancel(),
+      onPointerCancel: (_) => _cancel(),
       child: AnimatedBuilder(
         animation: _ctrl,
         builder: (_, __) => SizedBox(
