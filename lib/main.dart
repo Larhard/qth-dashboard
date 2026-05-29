@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:get_storage/get_storage.dart';
 import 'screens/home_screen.dart';
 import 'services/city_service.dart';
 
@@ -8,7 +8,9 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  WakelockPlus.enable();
+  // Screen-on wakelock is handled natively in MainActivity.kt via
+  // FLAG_KEEP_SCREEN_ON — no plugin required.
+  await GetStorage.init();
   await CityService.instance.load();
   runApp(const QthHelperApp());
 }

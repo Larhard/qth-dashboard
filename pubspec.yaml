@@ -9,10 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  geolocator: ^12.0.0
+  geolocator: ^13.0.0
   flutter_compass: ^0.8.0
-  wakelock_plus: ^1.2.8
-  shared_preferences: ^2.3.0
+  get_storage: ^2.1.1   # pure Dart, no Android plugin → no KGP issues
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.1

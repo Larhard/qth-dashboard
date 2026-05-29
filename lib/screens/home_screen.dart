@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:get_storage/get_storage.dart';
 import '../services/city_service.dart';
 import '../services/declination_service.dart';
 import '../utils/coordinate_utils.dart';
@@ -95,25 +95,25 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── MOB persistence ───────────────────────────────────────────────────────
-  Future<void> _loadMob() async {
-    final p = await SharedPreferences.getInstance();
-    final lat = p.getDouble('mob_lat');
-    final lon = p.getDouble('mob_lon');
+  // GetStorage is synchronous and pure-Dart — no Android plugin, no KGP.
+  static final _store = GetStorage();
+
+  void _loadMob() {
+    final lat = _store.read<double>('mob_lat');
+    final lon = _store.read<double>('mob_lon');
     if (lat != null && lon != null && mounted) {
       setState(() => _mob = (lat: lat, lon: lon));
     }
   }
 
-  Future<void> _saveMob(double lat, double lon) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setDouble('mob_lat', lat);
-    await p.setDouble('mob_lon', lon);
+  void _saveMob(double lat, double lon) {
+    _store.write('mob_lat', lat);
+    _store.write('mob_lon', lon);
   }
 
-  Future<void> _deleteMob() async {
-    final p = await SharedPreferences.getInstance();
-    await p.remove('mob_lat');
-    await p.remove('mob_lon');
+  void _deleteMob() {
+    _store.remove('mob_lat');
+    _store.remove('mob_lon');
   }
 
   // ── Stream init ───────────────────────────────────────────────────────────
