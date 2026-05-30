@@ -34,14 +34,26 @@ String _fmt(double abs, CoordFormat fmt, {required int padDeg, required String d
   }
 }
 
-/// Short example string illustrating the current format (used as placeholder text).
-String coordFormatHint(CoordFormat fmt) {
+/// Example latitude string for the current format (N/S axis).
+String coordLatHint(CoordFormat fmt) {
   switch (fmt) {
     case CoordFormat.degMinDec: return "52° 30.123' N";
     case CoordFormat.degDec:    return '52.502050° N';
     case CoordFormat.degMinSec: return '52° 30\' 07.38" N';
   }
 }
+
+/// Example longitude string for the current format (E/W axis).
+String coordLonHint(CoordFormat fmt) {
+  switch (fmt) {
+    case CoordFormat.degMinDec: return "018° 20.456' E";
+    case CoordFormat.degDec:    return '18.340167° E';
+    case CoordFormat.degMinSec: return '018° 20\' 27.36" E';
+  }
+}
+
+// Backward-compatible alias.
+String coordFormatHint(CoordFormat fmt) => coordLatHint(fmt);
 
 /// Parse a latitude or longitude value from user input.
 /// Accepts decimal degrees, DDM, and DMS with N/S/E/W suffix or leading minus.

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
-import '../utils/coordinate_utils.dart';
+import '../utils/coordinate_utils.dart' show formatLatF, formatLonF, maidenhead, parseCoordValue, coordLatHint, coordLonHint;
 import '../utils/geo_utils.dart';
 import '../utils/mgrs_utils.dart';
 import '../utils/units.dart';
@@ -309,7 +309,8 @@ class _WptEditSheetState extends State<_WptEditSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final hint = coordFormatHint(widget.coordFormat);
+    final latHint = coordLatHint(widget.coordFormat);
+    final lonHint = coordLonHint(widget.coordFormat);
     final needsSymbols = widget.coordFormat != CoordFormat.degDec;
 
     return Padding(
@@ -341,7 +342,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
             controller: _latCtrl,
             focusNode: _latFocus,
             style: const TextStyle(color: Colors.white),
-            decoration: _dec('Latitude', hint, errorText: _latError),
+            decoration: _dec('Latitude', latHint, errorText: _latError),
             keyboardType: const TextInputType.numberWithOptions(
                 signed: true, decimal: true),
           ),
@@ -352,7 +353,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
             controller: _lonCtrl,
             focusNode: _lonFocus,
             style: const TextStyle(color: Colors.white),
-            decoration: _dec('Longitude', hint, errorText: _lonError),
+            decoration: _dec('Longitude', lonHint, errorText: _lonError),
             keyboardType: const TextInputType.numberWithOptions(
                 signed: true, decimal: true),
           ),

@@ -1,7 +1,7 @@
-name: qth_helper
-description: GPS navigation helper — heading, coordinates, city finder, MOB.
+name: qth_dashboard
+description: GPS navigation dashboard — heading, coordinates, IARU/MGRS locator, city finder, waypoints.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

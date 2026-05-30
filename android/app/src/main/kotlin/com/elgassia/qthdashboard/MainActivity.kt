@@ -1,4 +1,4 @@
-package com.example.qth_helper
+package com.elgassia.qthdashboard
 
 import android.hardware.GeomagneticField
 import android.os.Build

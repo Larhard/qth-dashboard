@@ -193,9 +193,10 @@ class _HomeScreenState extends State<HomeScreen>
       _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
 
       // ── GPS heading ───────────────────────────────────────────────────────
-      if (pos.speed >= _gpsThresholdMs &&
-          !pos.heading.isNaN &&
-          pos.heading >= 0) {
+      // Primary source switches at _gpsThresholdMs (1.5 m/s). The last-known
+      // GPS heading is cached at a lower threshold so the secondary arrow
+      // appears even at walking pace — GPS course is usable above ~0.5 m/s.
+      if (pos.speed >= 0.5 && !pos.heading.isNaN && pos.heading >= 0) {
         _lastValidGpsHeading = pos.heading;
       }
 
@@ -241,7 +242,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Track azimuth ─────────────────────────────────────────────────────────
   void _updateTrackBearing(Position pos) {
-    if (pos.speed < 0.5) return; // no meaningful direction when nearly stationary
+    // Distance filter below handles noise — no speed gate here.
+    // Slow hiking (< 3.6 km/h) still produces a meaningful course bearing.
 
     if (_trackBuffer.isNotEmpty) {
       final last = _trackBuffer.last;
@@ -525,27 +527,60 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  // ── Landscape layout ─────────────────────────────────────────────────────
+  //
+  // Left column  (fixed 252 dp): heading (arrow + degrees + speed + source)
+  //                              + compact divider
+  //                              + coordinates (lat / lon / locator / alt / time)
+  //
+  // Right column (Expanded):     city section
+  //                              + compact divider
+  //                              + active waypoint card / MOB button
+  //
+  // This split gives each section enough vertical room without stacking
+  // everything into a single column that overflows on short landscape screens.
+  // Font sizes are stepped down ~15 % from portrait — legible without
+  // constantly shrinking with each new feature.
   Widget _buildLandscape(Position pos) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 140, child: _headingSectionLandscape(pos)),
-          const SizedBox(width: 32),
-          Expanded(
+          // ── Left: navigation data ─────────────────────────────────────
+          SizedBox(
+            width: 252,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                _coordsSectionLandscape(),
-                if (_nearestCity != null) ...[
-                  _dividerCompact(),
-                  _citySectionLandscape(_nearestCity!),
-                ],
+                _headingSectionLandscape(pos),
                 _dividerCompact(),
-                _wptSectionLandscape(pos),
+                _coordsSectionLandscape(),
               ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // ── Right: city + waypoint — left border for visual separation ─
+          Expanded(
+            child: Container(
+              decoration: const BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: Color(0xFF1A1A1A), width: 1),
+                ),
+              ),
+              padding: const EdgeInsets.only(left: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_nearestCity != null) ...[
+                    _citySectionLandscape(_nearestCity!),
+                    _dividerCompact(),
+                  ],
+                  _wptSectionLandscape(pos),
+                ],
+              ),
             ),
           ),
         ],
@@ -612,26 +647,31 @@ class _HomeScreenState extends State<HomeScreen>
         Text(_sourceLabel,
             style: const TextStyle(
                 fontSize: 12, color: Color(0xFF8A8A8A), letterSpacing: 2.5)),
-        if (_trackBearing != null && _gpsStaleSeconds < 30)
-          Text('TRK ${_trackBearing!.round()}°',
-              style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF686868),
-                  letterSpacing: 1.5)),
+        Text(
+          _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
+          style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF686868),
+              letterSpacing: 1.5),
+        ),
       ]),
     ]);
   }
 
+  // Landscape heading: mirrors the portrait layout (arrow left, text right) so
+  // both orientations feel consistent. A fixed-width SizedBox on the degrees
+  // text prevents the whole section from shifting when digit count changes
+  // (e.g. "9°" → "10°" → "359°"). TRK is always rendered so the row height
+  // is stable regardless of whether a bearing is available.
   Widget _headingSectionLandscape(Position pos) {
     final color = _headingColor;
     final primary = _heading;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(
-          width: 80,
-          height: 80,
+          width: 72,
+          height: 72,
           child: Stack(alignment: Alignment.center, children: [
             ValueListenableBuilder<double>(
               valueListenable: _compassNotifier,
@@ -644,41 +684,50 @@ class _HomeScreenState extends State<HomeScreen>
                   child: ArrowWidget(
                       bearingDeg: secondaryBearing,
                       color: Colors.white,
-                      size: 80),
+                      size: 72),
                 );
               },
             ),
-            ArrowWidget(bearingDeg: primary, color: color, size: 80),
+            ArrowWidget(bearingDeg: primary, color: color, size: 72),
           ]),
         ),
-        const SizedBox(height: 4),
-        Text('${primary.round()}°',
-            style: TextStyle(
-                fontSize: 52,
-                fontWeight: FontWeight.w900,
-                color: color,
-                height: 1.0)),
-        const SizedBox(height: 2),
-        GestureDetector(
-          onLongPress: _cycleSpeedUnit,
-          child: Text(
-            formatSpeed(pos.speed, _speedUnit),
-            style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF909090),
-                fontFeatures: [FontFeature.tabularFigures()]),
-          ),
-        ),
-        Text(_sourceLabel,
-            style: const TextStyle(
-                fontSize: 11, color: Color(0xFF8A8A8A), letterSpacing: 2.0)),
-        if (_trackBearing != null && _gpsStaleSeconds < 30)
-          Text('TRK ${_trackBearing!.round()}°',
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Fixed width prevents layout shift when "9°" grows to "359°".
+            SizedBox(
+              width: 105,
+              child: Text('${primary.round()}°',
+                  textAlign: TextAlign.start,
+                  style: TextStyle(
+                      fontSize: 46,
+                      fontWeight: FontWeight.w900,
+                      color: color,
+                      height: 1.0)),
+            ),
+            GestureDetector(
+              onLongPress: _cycleSpeedUnit,
+              child: Text(
+                formatSpeed(pos.speed, _speedUnit),
+                style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF909090),
+                    fontFeatures: [FontFeature.tabularFigures()]),
+              ),
+            ),
+            Text(_sourceLabel,
+                style: const TextStyle(
+                    fontSize: 10, color: Color(0xFF8A8A8A), letterSpacing: 2.0)),
+            Text(
+              _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
               style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFF686868),
-                  letterSpacing: 1.5)),
+                  fontSize: 10, color: Color(0xFF686868), letterSpacing: 1.5),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -867,6 +916,8 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  // Landscape city: 50 px arrow, 26 sp name — still clearly readable in the
+  // right column, which now has the full screen height available.
   Widget _citySectionLandscape(NearestCity nc) {
     final color = _cityColor;
     final subColor = _citySubColor;
@@ -874,8 +925,8 @@ class _HomeScreenState extends State<HomeScreen>
       onTap: _toggleCityMode,
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
-        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 44),
-        const SizedBox(width: 12),
+        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 50),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
@@ -883,24 +934,24 @@ class _HomeScreenState extends State<HomeScreen>
                 child: Text(nc.city.name,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 22, fontWeight: FontWeight.w700, color: color)),
+                        fontSize: 26, fontWeight: FontWeight.w700, color: color)),
               ),
               const SizedBox(width: 8),
               Text(nc.city.country,
                   style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 14,
                       color: subColor.withValues(alpha: 0.7))),
             ]),
             Row(children: [
               Text('${nc.bearingDeg.round()}°',
                   style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 17,
                       color: subColor,
                       fontFeatures: const [FontFeature.tabularFigures()])),
               const SizedBox(width: 14),
               Text(formatDistanceUnit(nc.distKm, _speedUnit),
                   style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 17,
                       color: color,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()])),
@@ -963,10 +1014,10 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _wptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final arrowSize = portrait ? 60.0 : 44.0;
-    final nameFontSize = portrait ? 18.0 : 16.0;
-    final dataFontSize = portrait ? 20.0 : 16.0;
-    final coordFontSize = portrait ? 14.0 : 12.0;
+    final arrowSize = portrait ? 60.0 : 52.0;
+    final nameFontSize = portrait ? 18.0 : 18.0;
+    final dataFontSize = portrait ? 20.0 : 18.0;
+    final coordFontSize = portrait ? 14.0 : 13.0;
     final padding = portrait
         ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
         : const EdgeInsets.fromLTRB(12, 8, 12, 8);
@@ -1029,7 +1080,17 @@ class _HomeScreenState extends State<HomeScreen>
                       fontSize: coordFontSize,
                       color: const Color(0xFFAA4444),
                       fontFeatures: const [FontFeature.tabularFigures()])),
-              SizedBox(height: portrait ? 8 : 4),
+              const SizedBox(height: 2),
+              Text(
+                _locStr(wp.lat, wp.lon),
+                style: TextStyle(
+                    fontSize: portrait ? 13.0 : 11.0,
+                    color: _locatorType == LocatorType.maidenhead
+                        ? const Color(0xFF69F0AE)
+                        : const Color(0xFFFFA726),
+                    fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+              SizedBox(height: portrait ? 6 : 4),
               const Align(
                 alignment: Alignment.centerRight,
                 child: Text('HOLD 3s TO DEACTIVATE',
