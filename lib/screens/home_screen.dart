@@ -11,6 +11,7 @@ import '../services/declination_service.dart';
 import '../services/waypoint_service.dart';
 import '../utils/coordinate_utils.dart';
 import '../utils/geo_utils.dart';
+import '../utils/mgrs_utils.dart';
 import '../utils/units.dart';
 import '../widgets/arrow_widget.dart';
 import 'waypoints_screen.dart';
@@ -71,6 +72,15 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Speed unit ────────────────────────────────────────────────────────────
   SpeedUnit _speedUnit = loadSpeedUnit();
+
+  // ── Time display ──────────────────────────────────────────────────────────
+  bool _timeUtc = loadTimeUtc();
+  String _cachedDateStr = '';
+  String _cachedTimeStr = '';
+
+  // ── Coordinate / locator format ────────────────────────────────────────────
+  CoordFormat _coordFormat = loadCoordFormat();
+  LocatorType _locatorType = loadLocatorType();
 
   // ── MOB hold-to-clear ─────────────────────────────────────────────────────
   // Driven by a real Stopwatch — immune to ticker mute/unmute jumps.
@@ -174,11 +184,13 @@ class _HomeScreenState extends State<HomeScreen>
       if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
 
       // ── Cache display strings (avoid recomputing in build) ────────────────
-      _cachedLatStr = formatLat(pos.latitude);
-      _cachedLonStr = formatLon(pos.longitude);
-      _cachedLocStr = maidenhead(pos.latitude, pos.longitude);
+      _cachedLatStr = formatLatF(pos.latitude, _coordFormat);
+      _cachedLonStr = formatLonF(pos.longitude, _coordFormat);
+      _cachedLocStr = _locStr(pos.latitude, pos.longitude);
       _cachedAlt = pos.altitude;
       _cachedAccuracy = pos.accuracy;
+      _cachedDateStr = _fmtDate(pos.timestamp, _timeUtc);
+      _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
 
       // ── GPS heading ───────────────────────────────────────────────────────
       if (pos.speed >= _gpsThresholdMs &&
@@ -300,6 +312,59 @@ class _HomeScreenState extends State<HomeScreen>
     _deactivateWaypoint();
   }
 
+  String _locStr(double lat, double lon) =>
+      _locatorType == LocatorType.maidenhead ? maidenhead(lat, lon) : mgrs(lat, lon);
+
+  void _toggleCoordFormat() {
+    final next = CoordFormat.values[(_coordFormat.index + 1) % CoordFormat.values.length];
+    final pos = _position;
+    setState(() {
+      _coordFormat = next;
+      if (pos != null) {
+        _cachedLatStr = formatLatF(pos.latitude, next);
+        _cachedLonStr = formatLonF(pos.longitude, next);
+      }
+    });
+    saveCoordFormat(next);
+    HapticFeedback.lightImpact();
+  }
+
+  void _toggleLocatorType() {
+    final next = _locatorType == LocatorType.maidenhead
+        ? LocatorType.mgrs
+        : LocatorType.maidenhead;
+    final pos = _position;
+    setState(() {
+      _locatorType = next;
+      if (pos != null) _cachedLocStr = _locStr(pos.latitude, pos.longitude);
+    });
+    saveLocatorType(next);
+    HapticFeedback.lightImpact();
+  }
+
+  void _toggleTimeZone() {
+    setState(() {
+      _timeUtc = !_timeUtc;
+      final pos = _position;
+      if (pos != null) {
+        _cachedDateStr = _fmtDate(pos.timestamp, _timeUtc);
+        _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
+      }
+    });
+    saveTimeUtc(_timeUtc);
+    HapticFeedback.lightImpact();
+  }
+
+  static String _fmtDate(DateTime dt, bool utc) {
+    final d = utc ? dt.toUtc() : dt.toLocal();
+    return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+  }
+
+  static String _fmtTime(DateTime dt, bool utc) {
+    final d = utc ? dt.toUtc() : dt.toLocal();
+    return '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}:${d.second.toString().padLeft(2,'0')}';
+  }
+
   void _cycleSpeedUnit() {
     final next =
         SpeedUnit.values[(_speedUnit.index + 1) % SpeedUnit.values.length];
@@ -350,6 +415,8 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (_) => WaypointsScreen(
           currentPosition: _position,
           speedUnit: _speedUnit,
+          coordFormat: _coordFormat,
+          locatorType: _locatorType,
         ),
       ),
     );
@@ -460,7 +527,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildLandscape(Position pos) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -544,12 +611,12 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         Text(_sourceLabel,
             style: const TextStyle(
-                fontSize: 12, color: Color(0xFF686868), letterSpacing: 2.5)),
+                fontSize: 12, color: Color(0xFF8A8A8A), letterSpacing: 2.5)),
         if (_trackBearing != null && _gpsStaleSeconds < 30)
           Text('TRK ${_trackBearing!.round()}°',
               style: const TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF4A4A4A),
+                  color: Color(0xFF686868),
                   letterSpacing: 1.5)),
       ]),
     ]);
@@ -605,12 +672,12 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         Text(_sourceLabel,
             style: const TextStyle(
-                fontSize: 11, color: Color(0xFF686868), letterSpacing: 2.0)),
+                fontSize: 11, color: Color(0xFF8A8A8A), letterSpacing: 2.0)),
         if (_trackBearing != null && _gpsStaleSeconds < 30)
           Text('TRK ${_trackBearing!.round()}°',
               style: const TextStyle(
                   fontSize: 11,
-                  color: Color(0xFF4A4A4A),
+                  color: Color(0xFF686868),
                   letterSpacing: 1.5)),
       ],
     );
@@ -618,14 +685,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Coordinates ───────────────────────────────────────────────────────────
   Widget _coordsSection() {
-    final stale = _gpsStaleSeconds > 10;
-    final coordColor =
-        stale ? const Color(0xFF006080) : const Color(0xFF00E5FF);
-    final locColor =
-        stale ? const Color(0xFF2A6040) : const Color(0xFF69F0AE);
-
     const coordStyle = TextStyle(
       fontSize: 30,
+      color: Color(0xFF00E5FF),
       fontWeight: FontWeight.w600,
       fontFeatures: [FontFeature.tabularFigures()],
     );
@@ -633,40 +695,27 @@ class _HomeScreenState extends State<HomeScreen>
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
         onTap: () => _copyToClipboard('$_cachedLatStr\n$_cachedLonStr'),
+        onLongPress: _toggleCoordFormat,
         behavior: HitTestBehavior.opaque,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_cachedLatStr,
-              style: coordStyle.copyWith(color: coordColor)),
+          Text(_cachedLatStr, style: coordStyle),
           const SizedBox(height: 2),
-          Text(_cachedLonStr,
-              style: coordStyle.copyWith(color: coordColor)),
+          Text(_cachedLonStr, style: coordStyle),
         ]),
       ),
       const SizedBox(height: 10),
-      GestureDetector(
-        onTap: () => _copyToClipboard(_cachedLocStr),
-        child: Text(_cachedLocStr,
-            style: TextStyle(
-                fontSize: 28,
-                color: locColor,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 4,
-                fontFeatures: const [FontFeature.tabularFigures()])),
-      ),
+      _locatorRow(fontSize: 28, letterSpacing: 4.0),
       const SizedBox(height: 6),
-      _altAccuracyRow(stale),
+      _altAccuracyRow(),
+      const SizedBox(height: 3),
+      _timeRow(),
     ]);
   }
 
   Widget _coordsSectionLandscape() {
-    final stale = _gpsStaleSeconds > 10;
-    final coordColor =
-        stale ? const Color(0xFF006080) : const Color(0xFF00E5FF);
-    final locColor =
-        stale ? const Color(0xFF2A6040) : const Color(0xFF69F0AE);
-
     const coordStyle = TextStyle(
       fontSize: 22,
+      color: Color(0xFF00E5FF),
       fontWeight: FontWeight.w600,
       fontFeatures: [FontFeature.tabularFigures()],
     );
@@ -674,30 +723,61 @@ class _HomeScreenState extends State<HomeScreen>
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
         onTap: () => _copyToClipboard('$_cachedLatStr\n$_cachedLonStr'),
+        onLongPress: _toggleCoordFormat,
         behavior: HitTestBehavior.opaque,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_cachedLatStr, style: coordStyle.copyWith(color: coordColor)),
+          Text(_cachedLatStr, style: coordStyle),
           const SizedBox(height: 2),
-          Text(_cachedLonStr, style: coordStyle.copyWith(color: coordColor)),
+          Text(_cachedLonStr, style: coordStyle),
         ]),
       ),
       const SizedBox(height: 6),
-      GestureDetector(
-        onTap: () => _copyToClipboard(_cachedLocStr),
-        child: Text(_cachedLocStr,
-            style: TextStyle(
-                fontSize: 20,
-                color: locColor,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 3,
-                fontFeatures: const [FontFeature.tabularFigures()])),
-      ),
+      _locatorRow(fontSize: 20, letterSpacing: 2.0),
       const SizedBox(height: 4),
-      _altAccuracyRow(stale),
+      _altAccuracyRow(),
+      const SizedBox(height: 3),
+      _timeRow(),
     ]);
   }
 
-  Widget _altAccuracyRow(bool stale) {
+  // Single locator row used by both portrait and landscape coords sections.
+  // IARU (green) vs MGRS (amber) — color and label make the type obvious.
+  // Long-press toggles the type; tap copies the value.
+  Widget _locatorRow({required double fontSize, required double letterSpacing}) {
+    final isMaidenhead = _locatorType == LocatorType.maidenhead;
+    final locColor =
+        isMaidenhead ? const Color(0xFF69F0AE) : const Color(0xFFFFA726);
+    final labelColor =
+        isMaidenhead ? const Color(0xFF1DE9B6) : const Color(0xFFE65100);
+    final locFontSize = isMaidenhead ? fontSize : fontSize * 0.72;
+    final locLetterSpacing = isMaidenhead ? letterSpacing : 0.5;
+    final label = isMaidenhead ? 'IARU' : 'MGRS';
+
+    return GestureDetector(
+      onTap: () => _copyToClipboard(_cachedLocStr),
+      onLongPress: _toggleLocatorType,
+      behavior: HitTestBehavior.opaque,
+      child: Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+        Text(_cachedLocStr,
+            style: TextStyle(
+                fontSize: locFontSize,
+                color: locColor,
+                fontWeight: FontWeight.w700,
+                letterSpacing: locLetterSpacing,
+                fontFeatures: const [FontFeature.tabularFigures()])),
+        const SizedBox(width: 8),
+        Text(label,
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: labelColor,
+                letterSpacing: 1.5)),
+      ]),
+    );
+  }
+
+  Widget _altAccuracyRow() {
+    final stale = _gpsStaleSeconds > 10;
     final altStr = formatAlt(_cachedAlt, _speedUnit);
     final accStr = '±${_cachedAccuracy.round()} m';
     final staleStr = stale ? '  GPS ${_gpsStaleSeconds}s' : '';
@@ -705,15 +785,47 @@ class _HomeScreenState extends State<HomeScreen>
       Text('alt $altStr',
           style: const TextStyle(
               fontSize: 12,
-              color: Color(0xFF555555),
+              color: Color(0xFF888888),
               fontFeatures: [FontFeature.tabularFigures()])),
       const SizedBox(width: 12),
       Text('$accStr$staleStr',
           style: TextStyle(
               fontSize: 12,
-              color: stale ? const Color(0xFFB05000) : const Color(0xFF444444),
+              color: stale ? const Color(0xFFFF7043) : const Color(0xFF777777),
               fontFeatures: const [FontFeature.tabularFigures()])),
     ]);
+  }
+
+  Widget _timeRow() {
+    if (_cachedTimeStr.isEmpty) return const SizedBox.shrink();
+    final color = _timeUtc ? const Color(0xFF4FC3F7) : const Color(0xFFFFB74D);
+    final label = _timeUtc ? 'UTC' : 'LCL';
+    final labelColor =
+        _timeUtc ? const Color(0xFF0091EA) : const Color(0xFFE65100);
+    return GestureDetector(
+      onLongPress: _toggleTimeZone,
+      behavior: HitTestBehavior.opaque,
+      child: Row(children: [
+        Text(_cachedDateStr,
+            style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontFeatures: const [FontFeature.tabularFigures()])),
+        const SizedBox(width: 8),
+        Text(_cachedTimeStr,
+            style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontFeatures: const [FontFeature.tabularFigures()])),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: labelColor,
+                letterSpacing: 1.5)),
+      ]),
+    );
   }
 
   // ── City ──────────────────────────────────────────────────────────────────
@@ -859,7 +971,10 @@ class _HomeScreenState extends State<HomeScreen>
         ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
         : const EdgeInsets.fromLTRB(12, 8, 12, 8);
 
-    return Listener(
+    // Outer Padding ensures the border ring is never clipped by parent bounds.
+    return Padding(
+      padding: const EdgeInsets.all(3),
+      child: Listener(
       onPointerDown: (_) => _startClear(),
       onPointerUp: (_) => _cancelClear(),
       onPointerCancel: (_) => _cancelClear(),
@@ -904,15 +1019,15 @@ class _HomeScreenState extends State<HomeScreen>
                 ]),
               ]),
               SizedBox(height: portrait ? 6 : 4),
-              Text(formatLat(wp.lat),
+              Text(formatLatF(wp.lat, _coordFormat),
                   style: TextStyle(
                       fontSize: coordFontSize,
-                      color: const Color(0xFF883333),
+                      color: const Color(0xFFAA4444),
                       fontFeatures: const [FontFeature.tabularFigures()])),
-              Text(formatLon(wp.lon),
+              Text(formatLonF(wp.lon, _coordFormat),
                   style: TextStyle(
                       fontSize: coordFontSize,
-                      color: const Color(0xFF883333),
+                      color: const Color(0xFFAA4444),
                       fontFeatures: const [FontFeature.tabularFigures()])),
               SizedBox(height: portrait ? 8 : 4),
               const Align(
@@ -927,6 +1042,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       ),
+    ),
     );
   }
 }

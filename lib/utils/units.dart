@@ -62,3 +62,29 @@ String speedUnitLabel(SpeedUnit unit) {
     case SpeedUnit.imperial: return 'IMPERIAL';
   }
 }
+
+const _timeUtcKey = 'time_utc';
+bool loadTimeUtc() => GetStorage().read<bool>(_timeUtcKey) ?? true;
+void saveTimeUtc(bool v) => GetStorage().write(_timeUtcKey, v);
+
+// ── Coordinate format ──────────────────────────────────────────────────────
+
+enum CoordFormat { degMinDec, degDec, degMinSec }
+
+const _coordFmtKey = 'coord_format';
+CoordFormat loadCoordFormat() {
+  final idx = GetStorage().read<int>(_coordFmtKey) ?? 0;
+  return CoordFormat.values[idx.clamp(0, CoordFormat.values.length - 1)];
+}
+void saveCoordFormat(CoordFormat f) => GetStorage().write(_coordFmtKey, f.index);
+
+// ── Locator type ───────────────────────────────────────────────────────────
+
+enum LocatorType { maidenhead, mgrs }
+
+const _locTypeKey = 'locator_type';
+LocatorType loadLocatorType() {
+  final idx = GetStorage().read<int>(_locTypeKey) ?? 0;
+  return LocatorType.values[idx.clamp(0, LocatorType.values.length - 1)];
+}
+void saveLocatorType(LocatorType t) => GetStorage().write(_locTypeKey, t.index);

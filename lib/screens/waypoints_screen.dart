@@ -3,18 +3,23 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
-import '../utils/geo_utils.dart';
-import '../utils/units.dart';
 import '../utils/coordinate_utils.dart';
+import '../utils/geo_utils.dart';
+import '../utils/mgrs_utils.dart';
+import '../utils/units.dart';
 
 class WaypointsScreen extends StatefulWidget {
   final Position? currentPosition;
   final SpeedUnit speedUnit;
+  final CoordFormat coordFormat;
+  final LocatorType locatorType;
 
   const WaypointsScreen({
     super.key,
     required this.currentPosition,
     required this.speedUnit,
+    required this.coordFormat,
+    required this.locatorType,
   });
 
   @override
@@ -37,7 +42,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           IconButton(
             icon: const Icon(Icons.add_location_alt_outlined),
             tooltip: 'Add waypoint manually',
-            onPressed: () => _showEditSheet(context, null),
+            onPressed: () => _showEditSheet(null),
           ),
         ],
       ),
@@ -46,7 +51,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(32),
                 child: Text(
-                  'No waypoints saved.\n\nTap the MOB button on the main screen to mark your current position, or use + to enter coordinates manually.',
+                  'No waypoints saved.\n\nTap MOB on the main screen to mark your current position, or use + to enter coordinates manually.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white38, fontSize: 15, height: 1.6),
                 ),
@@ -56,23 +61,35 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               itemCount: wpts.length,
               separatorBuilder: (_, __) =>
                   const Divider(color: Color(0xFF1A1A1A), height: 1),
-              itemBuilder: (ctx, i) => _tile(ctx, wpts[i]),
+              itemBuilder: (ctx, i) => _tile(wpts[i]),
             ),
     );
   }
 
-  Widget _tile(BuildContext ctx, Waypoint wp) {
+  Widget _tile(Waypoint wp) {
     final isActive = WaypointService.instance.activeId == wp.id;
     final pos = widget.currentPosition;
     final dist = pos != null
-        ? formatDistanceUnit(haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon), widget.speedUnit)
+        ? formatDistanceUnit(
+            haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon),
+            widget.speedUnit)
         : null;
+
+    final latStr = formatLatF(wp.lat, widget.coordFormat);
+    final lonStr = formatLonF(wp.lon, widget.coordFormat);
+    final locStr = widget.locatorType == LocatorType.maidenhead
+        ? maidenhead(wp.lat, wp.lon)
+        : mgrs(wp.lat, wp.lon);
+    final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
+    final locColor = widget.locatorType == LocatorType.maidenhead
+        ? const Color(0xFF69F0AE)
+        : const Color(0xFFFFA726);
 
     return ListTile(
       tileColor: isActive ? const Color(0xFF1A0000) : Colors.transparent,
       leading: Icon(
         isActive ? Icons.navigation : Icons.location_on_outlined,
-        color: isActive ? const Color(0xFFFF5252) : const Color(0xFF555555),
+        color: isActive ? const Color(0xFFFF5252) : const Color(0xFF777777),
         size: 22,
       ),
       title: Text(
@@ -86,21 +103,37 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _fmtTimestamp(wp.timestamp),
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
-          ),
-          Text(
-            '${formatLat(wp.lat)}  ${formatLon(wp.lon)}',
-            style: const TextStyle(color: Colors.white24, fontSize: 11,
-                fontFeatures: [FontFeature.tabularFigures()]),
-          ),
+          Text(_fmtTimestamp(wp.timestamp),
+              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          const SizedBox(height: 2),
+          Text('$latStr   $lonStr',
+              style: const TextStyle(
+                  color: Color(0xFF00C8E8),
+                  fontSize: 11,
+                  fontFeatures: [FontFeature.tabularFigures()])),
+          Row(children: [
+            Text(locStr,
+                style: TextStyle(
+                    color: locColor,
+                    fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+            const SizedBox(width: 4),
+            Text(locLabel,
+                style: const TextStyle(
+                    color: Colors.white30,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0)),
+          ]),
         ],
       ),
+      isThreeLine: true,
       trailing: dist != null
           ? Text(dist,
               style: const TextStyle(
-                  color: Colors.white54, fontSize: 14, fontWeight: FontWeight.w600))
+                  color: Colors.white54,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600))
           : null,
       onTap: () {
         HapticFeedback.lightImpact();
@@ -109,134 +142,164 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         } else {
           WaypointService.instance.setActive(wp.id);
         }
-        Navigator.pop(ctx, true);
+        Navigator.pop(context, true);
       },
       onLongPress: () {
         HapticFeedback.mediumImpact();
-        _showEditSheet(ctx, wp);
+        _showEditSheet(wp);
       },
     );
   }
 
-  void _showEditSheet(BuildContext ctx, Waypoint? existing) {
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    final coordCtrl = TextEditingController(
-      text: existing != null
-          ? '${existing.lat.toStringAsFixed(6)}, ${existing.lon.toStringAsFixed(6)}'
-          : '',
-    );
-    String? coordError;
-
+  void _showEditSheet(Waypoint? existing) {
     showModalBottomSheet(
-      context: ctx,
+      context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF111111),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (_, setSheetState) => Padding(
-          padding: EdgeInsets.fromLTRB(
-              24, 20, 24, MediaQuery.of(sheetCtx).viewInsets.bottom + 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Header ────────────────────────────────────────────────────
-              Text(
-                existing != null ? 'Edit Waypoint' : 'Add Waypoint',
-                style: const TextStyle(
-                    color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 20),
-              // ── Name ──────────────────────────────────────────────────────
-              TextField(
-                controller: nameCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration('Name', 'e.g. Summit KR-001'),
-                textCapitalization: TextCapitalization.sentences,
-              ),
-              const SizedBox(height: 16),
-              // ── Coordinates ───────────────────────────────────────────────
-              TextField(
-                controller: coordCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration(
-                  'Coordinates',
-                  'lat, lon  (e.g. 52.1234, 18.5678)',
-                  errorText: coordError,
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                    signed: true, decimal: true),
-              ),
-              const SizedBox(height: 24),
-              // ── Buttons ───────────────────────────────────────────────────
-              Row(children: [
-                if (existing != null)
-                  TextButton(
-                    onPressed: () => _confirmDelete(sheetCtx, existing),
-                    style: TextButton.styleFrom(foregroundColor: const Color(0xFFFF5252)),
-                    child: const Text('Delete'),
-                  ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () => Navigator.pop(sheetCtx),
-                  style: TextButton.styleFrom(foregroundColor: Colors.white38),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1A3A1A),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () {
-                    final parsed = _parseCoords(coordCtrl.text);
-                    if (parsed == null) {
-                      setSheetState(() => coordError = 'Invalid coordinates');
-                      return;
-                    }
-                    Navigator.pop(sheetCtx);
-                    if (existing != null) {
-                      WaypointService.instance.rename(existing.id, nameCtrl.text);
-                      WaypointService.instance.updateCoords(
-                          existing.id, parsed.lat, parsed.lon);
-                    } else {
-                      WaypointService.instance.addManual(
-                          nameCtrl.text, parsed.lat, parsed.lon);
-                    }
-                    setState(() {}); // refresh list
-                  },
-                  child: Text(existing != null ? 'Save' : 'Add'),
-                ),
-              ]),
-            ],
-          ),
-        ),
+      builder: (_) => _WptEditSheet(
+        existing: existing,
+        screenCtx: context,
+        coordFormat: widget.coordFormat,
+        onSaved: () => setState(() {}),
       ),
     );
   }
 
-  void _confirmDelete(BuildContext sheetCtx, Waypoint wp) {
-    Navigator.pop(sheetCtx); // close edit sheet
+  static String _fmtTimestamp(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    final days = diff.inDays;
+    if (days < 7) return '${days}d ago';
+    final d = dt.toLocal();
+    return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}  '
+        '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}';
+  }
+}
+
+// ── Edit / add bottom sheet ────────────────────────────────────────────────────
+
+class _WptEditSheet extends StatefulWidget {
+  final Waypoint? existing;
+  final BuildContext screenCtx;
+  final CoordFormat coordFormat;
+  final VoidCallback onSaved;
+
+  const _WptEditSheet({
+    required this.existing,
+    required this.screenCtx,
+    required this.coordFormat,
+    required this.onSaved,
+  });
+
+  @override
+  State<_WptEditSheet> createState() => _WptEditSheetState();
+}
+
+class _WptEditSheetState extends State<_WptEditSheet> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _latCtrl;
+  late final TextEditingController _lonCtrl;
+  late final FocusNode _latFocus;
+  late final FocusNode _lonFocus;
+  bool _latFocused = true;
+  String? _latError;
+  String? _lonError;
+
+  @override
+  void initState() {
+    super.initState();
+    final wp = widget.existing;
+    _nameCtrl = TextEditingController(text: wp?.name ?? '');
+    _latCtrl = TextEditingController(
+        text: wp != null ? formatLatF(wp.lat, widget.coordFormat) : '');
+    _lonCtrl = TextEditingController(
+        text: wp != null ? formatLonF(wp.lon, widget.coordFormat) : '');
+
+    _latFocus = FocusNode()
+      ..addListener(() {
+        if (_latFocus.hasFocus) setState(() => _latFocused = true);
+      });
+    _lonFocus = FocusNode()
+      ..addListener(() {
+        if (_lonFocus.hasFocus) setState(() => _latFocused = false);
+      });
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _latCtrl.dispose();
+    _lonCtrl.dispose();
+    _latFocus.dispose();
+    _lonFocus.dispose();
+    super.dispose();
+  }
+
+  void _insertSym(String sym) {
+    final ctrl = _latFocused ? _latCtrl : _lonCtrl;
+    final focus = _latFocused ? _latFocus : _lonFocus;
+    final sel = ctrl.selection;
+    final pos = sel.isValid ? sel.extentOffset.clamp(0, ctrl.text.length) : ctrl.text.length;
+    final text = ctrl.text;
+    ctrl.value = TextEditingValue(
+      text: text.substring(0, pos) + sym + text.substring(pos),
+      selection: TextSelection.collapsed(offset: pos + sym.length),
+    );
+    focus.requestFocus();
+  }
+
+  void _save() {
+    final lat = parseCoordValue(_latCtrl.text);
+    final lon = parseCoordValue(_lonCtrl.text);
+    final latOk = lat != null && lat >= -90 && lat <= 90;
+    final lonOk = lon != null && lon >= -180 && lon <= 180;
+    if (!latOk || !lonOk) {
+      setState(() {
+        _latError = latOk ? null : 'Invalid latitude';
+        _lonError = lonOk ? null : 'Invalid longitude';
+      });
+      return;
+    }
+    Navigator.pop(context);
+    final wp = widget.existing;
+    if (wp != null) {
+      WaypointService.instance.rename(wp.id, _nameCtrl.text);
+      WaypointService.instance.updateCoords(wp.id, lat, lon);
+    } else {
+      WaypointService.instance.addManual(_nameCtrl.text, lat, lon);
+    }
+    widget.onSaved();
+  }
+
+  void _confirmDelete() {
+    Navigator.pop(context); // close sheet
     showDialog(
-      context: context,
+      context: widget.screenCtx,
       builder: (dlgCtx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text('Delete waypoint?', style: TextStyle(color: Colors.white)),
-        content: Text('Remove "${wp.name}"?',
+        title: const Text('Delete waypoint?',
+            style: TextStyle(color: Colors.white)),
+        content: Text('Remove "${widget.existing!.name}"?',
             style: const TextStyle(color: Colors.white54)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dlgCtx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white38)),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white38)),
           ),
           TextButton(
             onPressed: () {
-              WaypointService.instance.remove(wp.id);
+              WaypointService.instance.remove(widget.existing!.id);
               Navigator.pop(dlgCtx);
-              setState(() {});
+              widget.onSaved();
             },
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFFFF5252)),
+            style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFFF5252)),
             child: const Text('Delete'),
           ),
         ],
@@ -244,7 +307,118 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     );
   }
 
-  static InputDecoration _inputDecoration(String label, String hint,
+  @override
+  Widget build(BuildContext context) {
+    final hint = coordFormatHint(widget.coordFormat);
+    final needsSymbols = widget.coordFormat != CoordFormat.degDec;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ──────────────────────────────────────────────────────
+          Text(widget.existing != null ? 'Edit Waypoint' : 'Add Waypoint',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 20),
+
+          // ── Name ────────────────────────────────────────────────────────
+          TextField(
+            controller: _nameCtrl,
+            style: const TextStyle(color: Colors.white),
+            decoration: _dec('Name', 'e.g. Summit KR-001'),
+            textCapitalization: TextCapitalization.sentences,
+          ),
+          const SizedBox(height: 16),
+
+          // ── Latitude ─────────────────────────────────────────────────────
+          TextField(
+            controller: _latCtrl,
+            focusNode: _latFocus,
+            style: const TextStyle(color: Colors.white),
+            decoration: _dec('Latitude', hint, errorText: _latError),
+            keyboardType: const TextInputType.numberWithOptions(
+                signed: true, decimal: true),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Longitude ────────────────────────────────────────────────────
+          TextField(
+            controller: _lonCtrl,
+            focusNode: _lonFocus,
+            style: const TextStyle(color: Colors.white),
+            decoration: _dec('Longitude', hint, errorText: _lonError),
+            keyboardType: const TextInputType.numberWithOptions(
+                signed: true, decimal: true),
+          ),
+
+          // ── Symbol buttons (DDM / DMS only) ──────────────────────────────
+          if (needsSymbols) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: ["°", "'", "\"", 'N', 'S', 'E', 'W']
+                  .map((s) => TextButton(
+                        onPressed: () => _insertSym(s),
+                        style: TextButton.styleFrom(
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          backgroundColor: const Color(0xFF1A2A1A),
+                          foregroundColor: const Color(0xFF69F0AE),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(4)),
+                        ),
+                        child: Text(s,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                      ))
+                  .toList(),
+            ),
+          ],
+
+          const SizedBox(height: 20),
+
+          // ── Action row ───────────────────────────────────────────────────
+          Row(children: [
+            if (widget.existing != null)
+              TextButton(
+                onPressed: _confirmDelete,
+                style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFF5252)),
+                child: const Text('Delete'),
+              ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              style:
+                  TextButton.styleFrom(foregroundColor: Colors.white38),
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1A3A1A),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: _save,
+              child:
+                  Text(widget.existing != null ? 'Save' : 'Add'),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  static InputDecoration _dec(String label, String hint,
       {String? errorText}) {
     return InputDecoration(
       labelText: label,
@@ -262,28 +436,5 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       focusedErrorBorder: const UnderlineInputBorder(
           borderSide: BorderSide(color: Color(0xFFFF5252))),
     );
-  }
-
-  static ({double lat, double lon})? _parseCoords(String text) {
-    final parts = text.split(',').map((s) => s.trim()).toList();
-    if (parts.length < 2) return null;
-    final lat = double.tryParse(parts[0]);
-    final lon = double.tryParse(parts.sublist(1).join(',').trim());
-    if (lat == null || lon == null) return null;
-    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
-    return (lat: lat, lon: lon);
-  }
-
-  static String _fmtTimestamp(DateTime dt) {
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inSeconds < 60) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    final days = diff.inDays;
-    if (days < 7) return '${days}d ago';
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    final d = dt.toLocal();
-    return '${d.day} ${months[d.month - 1]}  ${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}';
   }
 }

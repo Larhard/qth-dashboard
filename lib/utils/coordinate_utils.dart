@@ -1,18 +1,89 @@
-String formatLat(double lat) {
+import 'units.dart' show CoordFormat;
+
+// ── Legacy helpers (degrees decimal-minutes, used as default) ─────────────
+
+String formatLat(double lat) => formatLatF(lat, CoordFormat.degMinDec);
+String formatLon(double lon) => formatLonF(lon, CoordFormat.degMinDec);
+
+// ── Format-aware helpers ───────────────────────────────────────────────────
+
+String formatLatF(double lat, CoordFormat fmt) {
   final dir = lat >= 0 ? 'N' : 'S';
-  final abs = lat.abs();
-  final deg = abs.truncate();
-  final min = (abs - deg) * 60;
-  return "${deg.toString().padLeft(2, '0')}° ${min.toStringAsFixed(3)}' $dir";
+  return _fmt(lat.abs(), fmt, padDeg: 2, dir: dir);
 }
 
-String formatLon(double lon) {
+String formatLonF(double lon, CoordFormat fmt) {
   final dir = lon >= 0 ? 'E' : 'W';
-  final abs = lon.abs();
-  final deg = abs.truncate();
-  final min = (abs - deg) * 60;
-  return "${deg.toString().padLeft(3, '0')}° ${min.toStringAsFixed(3)}' $dir";
+  return _fmt(lon.abs(), fmt, padDeg: 3, dir: dir);
 }
+
+String _fmt(double abs, CoordFormat fmt, {required int padDeg, required String dir}) {
+  switch (fmt) {
+    case CoordFormat.degMinDec:
+      final deg = abs.truncate();
+      final min = (abs - deg) * 60;
+      return "${deg.toString().padLeft(padDeg, '0')}° ${min.toStringAsFixed(3)}' $dir";
+    case CoordFormat.degDec:
+      return "${abs.toStringAsFixed(6)}° $dir";
+    case CoordFormat.degMinSec:
+      final deg = abs.truncate();
+      final minRaw = (abs - deg) * 60;
+      final minInt = minRaw.truncate();
+      final sec = (minRaw - minInt) * 60;
+      return "${deg.toString().padLeft(padDeg, '0')}° ${minInt.toString().padLeft(2, '0')}' ${sec.toStringAsFixed(2)}\" $dir";
+  }
+}
+
+/// Short example string illustrating the current format (used as placeholder text).
+String coordFormatHint(CoordFormat fmt) {
+  switch (fmt) {
+    case CoordFormat.degMinDec: return "52° 30.123' N";
+    case CoordFormat.degDec:    return '52.502050° N';
+    case CoordFormat.degMinSec: return '52° 30\' 07.38" N';
+  }
+}
+
+/// Parse a latitude or longitude value from user input.
+/// Accepts decimal degrees, DDM, and DMS with N/S/E/W suffix or leading minus.
+/// Returns null if the value cannot be parsed or is out of range.
+double? parseCoordValue(String raw) {
+  var s = raw.trim();
+  if (s.isEmpty) return null;
+
+  final negative = s.toUpperCase().endsWith('S') ||
+      s.toUpperCase().endsWith('W') ||
+      s.startsWith('-');
+
+  // Strip direction letters, degree/minute/second symbols, leading minus.
+  s = s
+      .replaceAll(RegExp(r'[NnSsEeWw]'), '')
+      .replaceAll(RegExp(r"""[°'"]+"""), ' ')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  if (s.isEmpty) return null;
+
+  final parts = s.split(' ').where((p) => p.isNotEmpty).toList();
+  double value;
+  try {
+    if (parts.length == 1) {
+      value = double.parse(parts[0]);
+    } else if (parts.length == 2) {
+      value = double.parse(parts[0]) + double.parse(parts[1]) / 60.0;
+    } else {
+      value = double.parse(parts[0]) +
+          double.parse(parts[1]) / 60.0 +
+          double.parse(parts[2]) / 3600.0;
+    }
+  } catch (_) {
+    return null;
+  }
+
+  return negative ? -value : value;
+}
+
+// ── Maidenhead / IARU locator ─────────────────────────────────────────────
 
 /// Calculates 8-character Maidenhead/IARU locator (e.g. JO62mm80).
 String maidenhead(double lat, double lon) {
