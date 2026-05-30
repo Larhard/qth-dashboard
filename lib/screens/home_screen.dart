@@ -147,7 +147,31 @@ class _HomeScreenState extends State<HomeScreen>
       _cancelClear();
     } else if (state == AppLifecycleState.resumed) {
       _compassSub?.resume();
+      // GPS may have been throttled while the screen was off.
+      // Request one immediate fix so the stale indicator clears within seconds
+      // rather than waiting for the next stream event.
+      _requestImmediateGpsFix();
     }
+  }
+
+  void _requestImmediateGpsFix() {
+    Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    ).then((pos) {
+      if (!mounted) return;
+      _lastGpsFix = DateTime.now();
+      _cachedLatStr = formatLatF(pos.latitude, _coordFormat);
+      _cachedLonStr = formatLonF(pos.longitude, _coordFormat);
+      _cachedLocStr = _locStr(pos.latitude, pos.longitude);
+      _cachedAlt = pos.altitude;
+      _cachedAccuracy = pos.accuracy;
+      _cachedDateStr = _fmtDate(pos.timestamp, _timeUtc);
+      _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
+      setState(() {
+        _position = pos;
+        _gpsStaleSeconds = 0;
+      });
+    }).catchError((_) {});
   }
 
   // ── GPS staleness timer ────────────────────────────────────────────────────
@@ -361,6 +385,13 @@ class _HomeScreenState extends State<HomeScreen>
     HapticFeedback.lightImpact();
   }
 
+  static String _staleDuration(int s) {
+    if (s < 60) return '${s}s';
+    final m = s ~/ 60;
+    final rem = s % 60;
+    return rem > 0 ? '${m}m ${rem}s' : '${m}m';
+  }
+
   static String _fmtDate(DateTime dt, bool utc) {
     final d = utc ? dt.toUtc() : dt.toLocal();
     return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
@@ -498,8 +529,8 @@ class _HomeScreenState extends State<HomeScreen>
               right: 4,
               child: IconButton(
                 icon: const Icon(Icons.pin_drop_outlined),
-                iconSize: 20,
-                color: const Color(0xFF3A3A3A),
+                iconSize: 22,
+                color: const Color(0xFF888888),
                 onPressed: _openWaypoints,
                 tooltip: 'Waypoints',
                 padding: EdgeInsets.zero,
@@ -649,20 +680,20 @@ class _HomeScreenState extends State<HomeScreen>
           child: Text(
             formatSpeed(pos.speed, _speedUnit),
             style: const TextStyle(
-                fontSize: 22,
+                fontSize: 26,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFAAAAAA),
+                color: Color(0xFFD8D8D8),
                 fontFeatures: [FontFeature.tabularFigures()]),
           ),
         ),
         Text(_sourceLabel,
             style: const TextStyle(
-                fontSize: 12, color: Color(0xFFAAAAAA), letterSpacing: 2.5)),
+                fontSize: 13, color: Color(0xFFBBBBBB), letterSpacing: 2.5)),
         Text(
           _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
           style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF999999),
+              fontSize: 13,
+              color: Color(0xFFB0B0B0),
               letterSpacing: 1.5),
         ),
       ]),
@@ -723,19 +754,19 @@ class _HomeScreenState extends State<HomeScreen>
               child: Text(
                 formatSpeed(pos.speed, _speedUnit),
                 style: const TextStyle(
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFFAAAAAA),
+                    color: Color(0xFFD8D8D8),
                     fontFeatures: [FontFeature.tabularFigures()]),
               ),
             ),
             Text(_sourceLabel,
                 style: const TextStyle(
-                    fontSize: 12, color: Color(0xFFAAAAAA), letterSpacing: 2.5)),
+                    fontSize: 11, color: Color(0xFFBBBBBB), letterSpacing: 2.0)),
             Text(
               _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
               style: const TextStyle(
-                  fontSize: 12, color: Color(0xFF999999), letterSpacing: 1.5),
+                  fontSize: 11, color: Color(0xFFB0B0B0), letterSpacing: 1.5),
             ),
           ],
         ),
@@ -745,8 +776,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Coordinates ───────────────────────────────────────────────────────────
   Widget _coordsSection() {
+    // Coordinates are "medium" priority — smaller than the locator (critical)
+    // but bigger than altitude (tertiary). Long-press cycles the format.
     const coordStyle = TextStyle(
-      fontSize: 30,
+      fontSize: 22,
       color: Color(0xFFFFFFFF),
       fontWeight: FontWeight.w600,
       fontFeatures: [FontFeature.tabularFigures()],
@@ -763,8 +796,8 @@ class _HomeScreenState extends State<HomeScreen>
           Text(_cachedLonStr, style: coordStyle),
         ]),
       ),
-      const SizedBox(height: 10),
-      _locatorRow(fontSize: 28, letterSpacing: 4.0),
+      const SizedBox(height: 8),
+      _locatorRow(fontSize: 32, letterSpacing: 4.0),
       const SizedBox(height: 6),
       _altAccuracyRow(),
       const SizedBox(height: 3),
@@ -774,7 +807,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _coordsSectionLandscape() {
     const coordStyle = TextStyle(
-      fontSize: 24,
+      fontSize: 22,
       color: Color(0xFFFFFFFF),
       fontWeight: FontWeight.w600,
       fontFeatures: [FontFeature.tabularFigures()],
@@ -792,11 +825,11 @@ class _HomeScreenState extends State<HomeScreen>
         ]),
       ),
       const SizedBox(height: 6),
-      _locatorRow(fontSize: 22, letterSpacing: 2.5),
+      _locatorRow(fontSize: 24, letterSpacing: 2.5),
       const SizedBox(height: 4),
       _altAccuracyRow(),
       const SizedBox(height: 3),
-      _timeRow(),
+      _timeRow(fontSize: 15.0),
     ]);
   }
 
@@ -828,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen>
         const SizedBox(width: 8),
         Text(label,
             style: TextStyle(
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: labelColor,
                 letterSpacing: 1.5)),
@@ -840,23 +873,23 @@ class _HomeScreenState extends State<HomeScreen>
     final stale = _gpsStaleSeconds > 10;
     final altStr = formatAlt(_cachedAlt, _speedUnit);
     final accStr = '±${_cachedAccuracy.round()} m';
-    final staleStr = stale ? '  GPS ${_gpsStaleSeconds}s' : '';
+    final staleStr = stale ? '  GPS ${_staleDuration(_gpsStaleSeconds)}' : '';
     return Row(children: [
       Text('alt $altStr',
           style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF999999),
+              fontSize: 13,
+              color: Color(0xFFAAAAAA),
               fontFeatures: [FontFeature.tabularFigures()])),
       const SizedBox(width: 12),
       Text('$accStr$staleStr',
           style: TextStyle(
-              fontSize: 12,
-              color: stale ? const Color(0xFFFF7043) : const Color(0xFF888888),
+              fontSize: 13,
+              color: stale ? const Color(0xFFFF7043) : const Color(0xFF999999),
               fontFeatures: const [FontFeature.tabularFigures()])),
     ]);
   }
 
-  Widget _timeRow() {
+  Widget _timeRow({double fontSize = 18.0}) {
     if (_cachedTimeStr.isEmpty) return const SizedBox.shrink();
     // UTC = green (universal standard — matches IARU locator convention).
     // LCL = amber (regional/local — matches MGRS locator convention).
@@ -864,25 +897,26 @@ class _HomeScreenState extends State<HomeScreen>
     final label = _timeUtc ? 'UTC' : 'LCL';
     final labelColor =
         _timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100);
+    final labelSize = fontSize >= 16 ? 12.0 : 11.0;
     return GestureDetector(
       onLongPress: _toggleTimeZone,
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
         Text(_cachedDateStr,
             style: TextStyle(
-                fontSize: 14,
+                fontSize: fontSize,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()])),
         const SizedBox(width: 8),
         Text(_cachedTimeStr,
             style: TextStyle(
-                fontSize: 14,
+                fontSize: fontSize,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()])),
         const SizedBox(width: 6),
         Text(label,
             style: TextStyle(
-                fontSize: 11,
+                fontSize: labelSize,
                 fontWeight: FontWeight.w700,
                 color: labelColor,
                 letterSpacing: 1.5)),
@@ -905,17 +939,17 @@ class _HomeScreenState extends State<HomeScreen>
           Text(nc.city.name,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 30, fontWeight: FontWeight.w700, color: color)),
+                  fontSize: 32, fontWeight: FontWeight.w700, color: color)),
           Row(children: [
             Text('${nc.bearingDeg.round()}°',
                 style: TextStyle(
-                    fontSize: 20,
+                    fontSize: 22,
                     color: subColor,
                     fontFeatures: const [FontFeature.tabularFigures()])),
             const SizedBox(width: 18),
             Text(formatDistanceUnit(nc.distKm, _speedUnit),
                 style: TextStyle(
-                    fontSize: 20,
+                    fontSize: 22,
                     color: color,
                     fontWeight: FontWeight.w600,
                     fontFeatures: const [FontFeature.tabularFigures()])),
@@ -959,13 +993,13 @@ class _HomeScreenState extends State<HomeScreen>
             Row(children: [
               Text('${nc.bearingDeg.round()}°',
                   style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 20,
                       color: subColor,
                       fontFeatures: const [FontFeature.tabularFigures()])),
               const SizedBox(width: 14),
               Text(formatDistanceUnit(nc.distKm, _speedUnit),
                   style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 20,
                       color: color,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()])),
@@ -1029,8 +1063,8 @@ class _HomeScreenState extends State<HomeScreen>
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final arrowSize = portrait ? 60.0 : 56.0;
-    final nameFontSize = portrait ? 18.0 : 18.0;
-    final dataFontSize = portrait ? 20.0 : 20.0;
+    final nameFontSize = portrait ? 20.0 : 18.0;
+    final dataFontSize = portrait ? 22.0 : 20.0;
     final coordFontSize = portrait ? 14.0 : 14.0;
     final padding = portrait
         ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
@@ -1058,6 +1092,7 @@ class _HomeScreenState extends State<HomeScreen>
                 const SizedBox(width: 14),
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(wp.name,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           fontSize: nameFontSize,
                           fontWeight: FontWeight.w900,

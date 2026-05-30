@@ -26,6 +26,9 @@ class MainActivity : FlutterActivity() {
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
+        // No PARTIAL_WAKE_LOCK: GPS is allowed to throttle when the screen is off
+        // to preserve battery on long hikes. The Flutter layer requests an immediate
+        // fix on resume so the stale window is minimised when the screen comes back on.
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
