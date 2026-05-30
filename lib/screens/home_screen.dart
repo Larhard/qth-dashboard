@@ -1085,9 +1085,7 @@ class _HomeScreenState extends State<HomeScreen>
                 _locStr(wp.lat, wp.lon),
                 style: TextStyle(
                     fontSize: portrait ? 13.0 : 11.0,
-                    color: _locatorType == LocatorType.maidenhead
-                        ? const Color(0xFF69F0AE)
-                        : const Color(0xFFFFA726),
+                    color: const Color(0xFFAA4444),
                     fontFeatures: const [FontFeature.tabularFigures()]),
               ),
               SizedBox(height: portrait ? 6 : 4),
