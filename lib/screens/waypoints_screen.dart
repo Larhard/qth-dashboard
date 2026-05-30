@@ -108,7 +108,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           const SizedBox(height: 2),
           Text('$latStr   $lonStr',
               style: const TextStyle(
-                  color: Color(0xFF00C8E8),
+                  color: Color(0xFFCCCCCC),
                   fontSize: 11,
                   fontFeatures: [FontFeature.tabularFigures()])),
           Row(children: [

@@ -101,17 +101,21 @@ class _HomeScreenState extends State<HomeScreen>
   Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
   String get _sourceLabel => _usingGps ? 'GPS' : 'MAG';
 
-  // Color progression: orange → amber → sky-blue (clearly distinct from
-  // the green GPS arrow and cyan coordinate display).
+  // Color progression follows the warm spectrum — orange → amber → lime —
+  // so all three levels read as "the same concept at increasing resolution."
+  // The traffic-light metaphor (orange/yellow/green) reinforces the scale
+  // intuitively without requiring the user to memorise anything.
+  // Lime (#C6FF00) is clearly distinct from the mint green of the GPS arrow
+  // and IARU locator (#69F0AE), avoiding cross-section confusion.
   Color get _cityColor => switch (CityService.instance.mode) {
-    CityMode.large    => const Color(0xFFFF9800),
-    CityMode.precise  => const Color(0xFFFFD740),
-    CityMode.detailed => const Color(0xFF4FC3F7),
+    CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
+    CityMode.precise  => const Color(0xFFFFD740),  // amber    — regional
+    CityMode.detailed => const Color(0xFFC6FF00),  // lime     — local detail
   };
   Color get _citySubColor => switch (CityService.instance.mode) {
-    CityMode.large    => const Color(0xFFE65100),
-    CityMode.precise  => const Color(0xFFFFAB40),
-    CityMode.detailed => const Color(0xFF0091EA),
+    CityMode.large    => const Color(0xFFE65100),  // deep orange
+    CityMode.precise  => const Color(0xFFFFAB40),  // light amber
+    CityMode.detailed => const Color(0xFFAEEA00),  // darker lime
   };
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -544,8 +548,10 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildLandscape(Position pos) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      // CrossAxisAlignment.stretch gives the right column the same height as the
+      // Scaffold body so Spacer can pin the MOB section to the bottom.
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── Left: navigation data ─────────────────────────────────────
           SizedBox(
@@ -561,7 +567,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           const SizedBox(width: 12),
-          // ── Right: city + waypoint — left border for visual separation ─
+          // ── Right: city at top, MOB pinned to bottom ──────────────────
           Expanded(
             child: Container(
               decoration: const BoxDecoration(
@@ -572,12 +578,13 @@ class _HomeScreenState extends State<HomeScreen>
               padding: const EdgeInsets.only(left: 14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+                mainAxisSize: MainAxisSize.max,
                 children: [
                   if (_nearestCity != null) ...[
                     _citySectionLandscape(_nearestCity!),
                     _dividerCompact(),
                   ],
+                  const Spacer(),
                   _wptSectionLandscape(pos),
                 ],
               ),
@@ -670,8 +677,8 @@ class _HomeScreenState extends State<HomeScreen>
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(
-          width: 72,
-          height: 72,
+          width: 80,
+          height: 80,
           child: Stack(alignment: Alignment.center, children: [
             ValueListenableBuilder<double>(
               valueListenable: _compassNotifier,
@@ -684,25 +691,25 @@ class _HomeScreenState extends State<HomeScreen>
                   child: ArrowWidget(
                       bearingDeg: secondaryBearing,
                       color: Colors.white,
-                      size: 72),
+                      size: 80),
                 );
               },
             ),
-            ArrowWidget(bearingDeg: primary, color: color, size: 72),
+            ArrowWidget(bearingDeg: primary, color: color, size: 80),
           ]),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             // Fixed width prevents layout shift when "9°" grows to "359°".
             SizedBox(
-              width: 105,
+              width: 120,
               child: Text('${primary.round()}°',
                   textAlign: TextAlign.start,
                   style: TextStyle(
-                      fontSize: 46,
+                      fontSize: 52,
                       fontWeight: FontWeight.w900,
                       color: color,
                       height: 1.0)),
@@ -712,7 +719,7 @@ class _HomeScreenState extends State<HomeScreen>
               child: Text(
                 formatSpeed(pos.speed, _speedUnit),
                 style: const TextStyle(
-                    fontSize: 15,
+                    fontSize: 18,
                     fontWeight: FontWeight.w600,
                     color: Color(0xFF909090),
                     fontFeatures: [FontFeature.tabularFigures()]),
@@ -720,11 +727,11 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             Text(_sourceLabel,
                 style: const TextStyle(
-                    fontSize: 10, color: Color(0xFF8A8A8A), letterSpacing: 2.0)),
+                    fontSize: 12, color: Color(0xFF8A8A8A), letterSpacing: 2.5)),
             Text(
               _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
               style: const TextStyle(
-                  fontSize: 10, color: Color(0xFF686868), letterSpacing: 1.5),
+                  fontSize: 12, color: Color(0xFF686868), letterSpacing: 1.5),
             ),
           ],
         ),
@@ -736,7 +743,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _coordsSection() {
     const coordStyle = TextStyle(
       fontSize: 30,
-      color: Color(0xFF00E5FF),
+      color: Color(0xFFFFFFFF),
       fontWeight: FontWeight.w600,
       fontFeatures: [FontFeature.tabularFigures()],
     );
@@ -763,8 +770,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _coordsSectionLandscape() {
     const coordStyle = TextStyle(
-      fontSize: 22,
-      color: Color(0xFF00E5FF),
+      fontSize: 24,
+      color: Color(0xFFFFFFFF),
       fontWeight: FontWeight.w600,
       fontFeatures: [FontFeature.tabularFigures()],
     );
@@ -781,7 +788,7 @@ class _HomeScreenState extends State<HomeScreen>
         ]),
       ),
       const SizedBox(height: 6),
-      _locatorRow(fontSize: 20, letterSpacing: 2.0),
+      _locatorRow(fontSize: 22, letterSpacing: 2.5),
       const SizedBox(height: 4),
       _altAccuracyRow(),
       const SizedBox(height: 3),
@@ -847,10 +854,12 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _timeRow() {
     if (_cachedTimeStr.isEmpty) return const SizedBox.shrink();
-    final color = _timeUtc ? const Color(0xFF4FC3F7) : const Color(0xFFFFB74D);
+    // UTC = neutral grey (universal/standard), LCL = warm amber (personal/local).
+    // No blue in either — avoids chromatic-aberration blur for sensitive users.
+    final color = _timeUtc ? const Color(0xFFCCCCCC) : const Color(0xFFFFB74D);
     final label = _timeUtc ? 'UTC' : 'LCL';
     final labelColor =
-        _timeUtc ? const Color(0xFF0091EA) : const Color(0xFFE65100);
+        _timeUtc ? const Color(0xFF999999) : const Color(0xFFE65100);
     return GestureDetector(
       onLongPress: _toggleTimeZone,
       behavior: HitTestBehavior.opaque,
@@ -916,8 +925,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Landscape city: 50 px arrow, 26 sp name — still clearly readable in the
-  // right column, which now has the full screen height available.
   Widget _citySectionLandscape(NearestCity nc) {
     final color = _cityColor;
     final subColor = _citySubColor;
@@ -925,7 +932,7 @@ class _HomeScreenState extends State<HomeScreen>
       onTap: _toggleCityMode,
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
-        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 50),
+        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 56),
         const SizedBox(width: 14),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -934,7 +941,7 @@ class _HomeScreenState extends State<HomeScreen>
                 child: Text(nc.city.name,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 26, fontWeight: FontWeight.w700, color: color)),
+                        fontSize: 28, fontWeight: FontWeight.w700, color: color)),
               ),
               const SizedBox(width: 8),
               Text(nc.city.country,
@@ -945,13 +952,13 @@ class _HomeScreenState extends State<HomeScreen>
             Row(children: [
               Text('${nc.bearingDeg.round()}°',
                   style: TextStyle(
-                      fontSize: 17,
+                      fontSize: 18,
                       color: subColor,
                       fontFeatures: const [FontFeature.tabularFigures()])),
               const SizedBox(width: 14),
               Text(formatDistanceUnit(nc.distKm, _speedUnit),
                   style: TextStyle(
-                      fontSize: 17,
+                      fontSize: 18,
                       color: color,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()])),
@@ -992,7 +999,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (wp == null) {
       return SizedBox(
         width: double.infinity,
-        height: 56,
+        height: 70,
         child: ElevatedButton(
           onPressed: _addWaypoint,
           style: ElevatedButton.styleFrom(
@@ -1004,7 +1011,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           child: const Text('MOB',
               style: TextStyle(
-                  fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 4)),
+                  fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 4)),
         ),
       );
     }
@@ -1014,10 +1021,10 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _wptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final arrowSize = portrait ? 60.0 : 52.0;
+    final arrowSize = portrait ? 60.0 : 56.0;
     final nameFontSize = portrait ? 18.0 : 18.0;
-    final dataFontSize = portrait ? 20.0 : 18.0;
-    final coordFontSize = portrait ? 14.0 : 13.0;
+    final dataFontSize = portrait ? 20.0 : 20.0;
+    final coordFontSize = portrait ? 14.0 : 14.0;
     final padding = portrait
         ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
         : const EdgeInsets.fromLTRB(12, 8, 12, 8);
@@ -1084,7 +1091,7 @@ class _HomeScreenState extends State<HomeScreen>
               Text(
                 _locStr(wp.lat, wp.lon),
                 style: TextStyle(
-                    fontSize: portrait ? 13.0 : 11.0,
+                    fontSize: portrait ? 13.0 : 13.0,
                     color: const Color(0xFFAA4444),
                     fontFeatures: const [FontFeature.tabularFigures()]),
               ),
