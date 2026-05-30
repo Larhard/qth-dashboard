@@ -75,8 +75,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Time display ──────────────────────────────────────────────────────────
   bool _timeUtc = loadTimeUtc();
-  String _cachedDateStr = '';
-  String _cachedTimeStr = '';
+  // Offset from system clock to GPS time, updated on every GPS fix.
+  // DateTime.now() + _gpsClockOffset gives a GPS-calibrated current time
+  // that ticks in real time between fixes.
+  Duration _gpsClockOffset = Duration.zero;
 
   // ── Coordinate / locator format ────────────────────────────────────────────
   CoordFormat _coordFormat = loadCoordFormat();
@@ -175,8 +177,7 @@ class _HomeScreenState extends State<HomeScreen>
       _cachedLocStr = _locStr(pos.latitude, pos.longitude);
       _cachedAlt = pos.altitude;
       _cachedAccuracy = pos.accuracy;
-      _cachedDateStr = _fmtDate(pos.timestamp, _timeUtc);
-      _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
+      _gpsClockOffset = pos.timestamp.difference(DateTime.now());
       setState(() {
         _position = pos;
         _gpsStaleSeconds = 0;
@@ -188,12 +189,10 @@ class _HomeScreenState extends State<HomeScreen>
   void _onStaleTick(Timer _) {
     if (!mounted) return;
     final sec = DateTime.now().difference(_lastGpsFix).inSeconds;
-    // Only call setState when crossing the threshold or already stale
-    if ((sec > 10) != (_gpsStaleSeconds > 10)) {
-      setState(() => _gpsStaleSeconds = sec);
-    } else if (_gpsStaleSeconds > 10) {
-      setState(() => _gpsStaleSeconds = sec);
-    }
+    // Always rebuild on every tick: the time row needs a fresh DateTime.now()
+    // each second. The cost is one setState per second while the screen is on;
+    // the timer is cancelled when the screen turns off.
+    if (sec != _gpsStaleSeconds) setState(() => _gpsStaleSeconds = sec);
   }
 
   // ── Stream init ───────────────────────────────────────────────────────────
@@ -249,8 +248,7 @@ class _HomeScreenState extends State<HomeScreen>
       _cachedLocStr = _locStr(pos.latitude, pos.longitude);
       _cachedAlt = pos.altitude;
       _cachedAccuracy = pos.accuracy;
-      _cachedDateStr = _fmtDate(pos.timestamp, _timeUtc);
-      _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
+      _gpsClockOffset = pos.timestamp.difference(DateTime.now());
 
       // ── GPS heading ───────────────────────────────────────────────────────
       // Primary source switches at _gpsThresholdMs (1.5 m/s). The last-known
@@ -391,14 +389,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _toggleTimeZone() {
-    setState(() {
-      _timeUtc = !_timeUtc;
-      final pos = _position;
-      if (pos != null) {
-        _cachedDateStr = _fmtDate(pos.timestamp, _timeUtc);
-        _cachedTimeStr = _fmtTime(pos.timestamp, _timeUtc);
-      }
-    });
+    setState(() => _timeUtc = !_timeUtc);
     saveTimeUtc(_timeUtc);
     HapticFeedback.lightImpact();
   }
@@ -908,9 +899,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _timeRow({double fontSize = 18.0}) {
-    if (_cachedTimeStr.isEmpty) return const SizedBox.shrink();
-    // UTC = green (universal standard — matches IARU locator convention).
-    // LCL = amber (regional/local — matches MGRS locator convention).
+    // Compute the current GPS-calibrated time on every build.
+    // _gpsClockOffset is updated on each GPS fix; between fixes the system
+    // clock advances normally, so the display ticks every second in real time.
+    // Before the first GPS fix the offset is zero and the system clock is shown.
+    final now = DateTime.now().add(_gpsClockOffset);
+    final dateStr = _fmtDate(now, _timeUtc);
+    final timeStr = _fmtTime(now, _timeUtc);
     final color = _timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D);
     final label = _timeUtc ? 'UTC' : 'LCL';
     final labelColor =
@@ -920,13 +915,13 @@ class _HomeScreenState extends State<HomeScreen>
       onLongPress: _toggleTimeZone,
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
-        Text(_cachedDateStr,
+        Text(dateStr,
             style: TextStyle(
                 fontSize: fontSize,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()])),
         const SizedBox(width: 8),
-        Text(_cachedTimeStr,
+        Text(timeStr,
             style: TextStyle(
                 fontSize: fontSize,
                 color: color,
