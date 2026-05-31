@@ -402,11 +402,52 @@ class _HomeScreenState extends State<HomeScreen>
     _toggleWatch..stop()..reset();
     _toggleTicker.stop();
     HapticFeedback.lightImpact();
-    setState(() {
-      _toggleProgress = 0.0;
-      _gpsOnLock = !_gpsOnLock;
-    });
-    GetStorage().write('gps_on_lock', _gpsOnLock);
+    // Reset progress ring immediately so it doesn't stay filled during the
+    // async permission request that may follow.
+    setState(() => _toggleProgress = 0.0);
+
+    if (!_gpsOnLock) {
+      // Enabling LIVE mode: background location permission is required on
+      // Android 10+ even when a foreground service is running — Android
+      // enforces the background location check once the screen is locked.
+      _enableLiveModeWithPermission();
+    } else {
+      setState(() => _gpsOnLock = false);
+      GetStorage().write('gps_on_lock', false);
+      _showSettingSnack('GPS on screen lock: OFF\nGPS pauses when screen is off — saves battery');
+    }
+  }
+
+  Future<void> _enableLiveModeWithPermission() async {
+    var perm = await Geolocator.checkPermission();
+    if (perm != LocationPermission.always) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (!mounted) return;
+    if (perm == LocationPermission.always) {
+      setState(() => _gpsOnLock = true);
+      GetStorage().write('gps_on_lock', true);
+      _showSettingSnack('GPS on screen lock: ON\nGPS keeps tracking when screen is off');
+    } else {
+      // Permission denied: stay off and tell the user what to do.
+      _showSettingSnack(
+        'Background location required.\nGrant "Allow all the time" in app Settings to enable GPS on lock screen.',
+      );
+    }
+  }
+
+  void _showSettingSnack(String message) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message,
+          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5)),
+      backgroundColor: const Color(0xFF1C1C1C),
+      duration: const Duration(milliseconds: 2500),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ));
   }
 
   String _locStr(double lat, double lon) =>
@@ -602,17 +643,27 @@ class _HomeScreenState extends State<HomeScreen>
             // GestureDetector instead of IconButton: IconButton's Tooltip
             // widget intercepts long-press to show tooltip text, so the
             // onLongPress callback never fires when a tooltip is set.
+            // HitTestBehavior.opaque: transparent padding area responds to touches.
+            // 48 px minimum touch target matches Material spec and IconButton default.
             Positioned(
-              top: 4,
-              left: 4,
+              top: 0,
+              left: 0,
               child: GestureDetector(
                 onLongPress: _openDebug,
-                child: const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Icon(
-                    Icons.bug_report_outlined,
-                    size: 22,
-                    color: Color(0xFF444444),
+                behavior: HitTestBehavior.opaque,
+                child: const SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 6, left: 6),
+                      child: Icon(
+                        Icons.bug_report_outlined,
+                        size: 22,
+                        color: Color(0xFF444444),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1243,97 +1294,105 @@ class _HomeScreenState extends State<HomeScreen>
         painter: _WptBorderPainter(_clearProgress),
         child: Padding(
           padding: padding,
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ArrowWidget(
-                  bearingDeg: b,
-                  color: const Color(0xFFFF3333),
-                  size: arrowSize),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Name (left) + elapsed time (right) on the same row.
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
+              // ── Bearing row ─────────────────────────────────────────────
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ArrowWidget(
+                      bearingDeg: b,
+                      color: const Color(0xFFFF3333),
+                      size: arrowSize),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Flexible(
-                          child: Text(wp.name,
-                              overflow: TextOverflow.ellipsis,
+                        Text(wp.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: nameFontSize,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFFFF3333),
+                                letterSpacing: 1.5)),
+                        Row(children: [
+                          Text('${b.round()}°',
                               style: TextStyle(
-                                  fontSize: nameFontSize,
-                                  fontWeight: FontWeight.w900,
+                                  fontSize: dataFontSize,
+                                  color: const Color(0xFFFF2020),
+                                  fontFeatures: const [FontFeature.tabularFigures()])),
+                          const SizedBox(width: 14),
+                          Text(formatDistanceUnit(d, _speedUnit),
+                              style: TextStyle(
+                                  fontSize: dataFontSize,
                                   color: const Color(0xFFFF3333),
-                                  letterSpacing: 1.5)),
-                        ),
-                        Text(
-                          formatElapsed(
-                              DateTime.now().difference(wp.timestamp)),
-                          style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF883333),
-                              fontFeatures: [FontFeature.tabularFigures()]),
-                        ),
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: const [FontFeature.tabularFigures()])),
+                        ]),
                       ],
                     ),
-                    Row(children: [
-                      Text('${b.round()}°',
-                          style: TextStyle(
-                              fontSize: dataFontSize,
-                              color: const Color(0xFFFF2020),
-                              fontFeatures: const [
-                                FontFeature.tabularFigures()
-                              ])),
-                      const SizedBox(width: 14),
-                      Text(formatDistanceUnit(d, _speedUnit),
-                          style: TextStyle(
-                              fontSize: dataFontSize,
-                              color: const Color(0xFFFF3333),
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures()
-                              ])),
-                    ]),
-                    SizedBox(height: portrait ? 6 : 4),
-                    Text(formatLatF(wp.lat, _coordFormat),
-                        style: TextStyle(
-                            fontSize: coordFontSize,
-                            color: const Color(0xFFCC2222),
-                            fontFeatures: const [FontFeature.tabularFigures()])),
-                    Text(formatLonF(wp.lon, _coordFormat),
-                        style: TextStyle(
-                            fontSize: coordFontSize,
-                            color: const Color(0xFFCC2222),
-                            fontFeatures: const [FontFeature.tabularFigures()])),
-                    const SizedBox(height: 2),
-                    Text(
-                      _locStr(wp.lat, wp.lon),
-                      style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFFCC2222),
-                          fontFeatures: [FontFeature.tabularFigures()]),
-                    ),
-                    SizedBox(height: portrait ? 6 : 4),
-                    const Align(
-                      alignment: Alignment.centerRight,
-                      child: Text('HOLD 3s TO DEACTIVATE',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: Color(0xFF4A1A1A),
-                              letterSpacing: 1.5)),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
+              SizedBox(height: portrait ? 6 : 4),
+              // ── [lat | date], [lon | time], [locator | elapsed] ─────────
+              // All three rows share the same color palette so the right
+              // column reads as part of the card rather than secondary info.
+              _wptDataRow(
+                left: formatLatF(wp.lat, _coordFormat),
+                right: _fmtDate(wp.timestamp, _timeUtc),
+                fontSize: coordFontSize,
+              ),
+              _wptDataRow(
+                left: formatLonF(wp.lon, _coordFormat),
+                right: '${_fmtTime(wp.timestamp, _timeUtc)} ${_timeUtc ? 'UTC' : 'LCL'}',
+                fontSize: coordFontSize,
+              ),
+              const SizedBox(height: 2),
+              _wptDataRow(
+                left: _locStr(wp.lat, wp.lon),
+                right: formatElapsed(DateTime.now().difference(wp.timestamp)),
+                fontSize: 13,
+              ),
+              SizedBox(height: portrait ? 6 : 4),
+              const Align(
+                alignment: Alignment.centerRight,
+                child: Text('HOLD 3s TO DEACTIVATE',
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF4A1A1A),
+                        letterSpacing: 1.5)),
               ),
             ],
           ),
         ),
       ),
     ),
+    );
+  }
+
+  // Single row in the waypoint data section: left-aligned label, right-aligned
+  // value, both the same font size and the same dim-red card colour.
+  Widget _wptDataRow({
+    required String left,
+    required String right,
+    required double fontSize,
+  }) {
+    final style = TextStyle(
+      fontSize: fontSize,
+      color: const Color(0xFFCC2222),
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(left, style: style),
+        Text(right, style: style),
+      ],
     );
   }
 }
