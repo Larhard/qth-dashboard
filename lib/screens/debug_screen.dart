@@ -497,7 +497,7 @@ class _DebugScreenState extends State<DebugScreen> {
       CityMode.large:    const Color(0xFFFF9800),
       CityMode.precise:  const Color(0xFFFFD740),
       CityMode.detailed: const Color(0xFFC6FF00),
-      CityMode.port:     const Color(0xFF29B6F6),
+      CityMode.port:     const Color(0xFF00E5FF),  // matches home_screen
     };
     final rows = <Widget>[];
     for (final mode in CityMode.values) {

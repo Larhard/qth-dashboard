@@ -34,6 +34,43 @@ Optional third source — OpenStreetMap via Overpass API
 import argparse, csv, io, json, re, sys, time, urllib.error, urllib.parse, urllib.request, zipfile
 from pathlib import Path
 
+
+# ── Progress helper (shared by GeoNames and OSM loops) ───────────────────────
+
+def _fmt_dur(s: float) -> str:
+    if s < 60:   return f"{int(s)}s"
+    if s < 3600: return f"{s / 60:.1f}m"
+    return f"{s / 3600:.1f}h"
+
+
+class _Progress:
+    """Single-line progress bar with elapsed time and ETA written to stderr."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.done  = 0
+        self.start = time.monotonic()
+
+    def update(self, n: int = 1, detail: str = "") -> None:
+        self.done += n
+        elapsed = time.monotonic() - self.start
+        pct  = self.done / self.total * 100 if self.total else 0
+        rate = self.done / elapsed if elapsed > 0.05 else 0
+        eta  = (self.total - self.done) / rate if rate > 0 else 0
+        det  = f"  {detail}" if detail else ""
+        sys.stderr.write(
+            f"\r  [{self.done}/{self.total}] {pct:5.1f}%  "
+            f"elapsed {_fmt_dur(elapsed)}  ETA {_fmt_dur(eta)}{det}          "
+        )
+        sys.stderr.flush()
+
+    def finish(self, msg: str = "") -> None:
+        elapsed = time.monotonic() - self.start
+        sys.stderr.write(
+            f"\r  Done {self.done}/{self.total} in {_fmt_dur(elapsed)}.{' ' + msg if msg else ''}\n"
+        )
+        sys.stderr.flush()
+
 OUT = Path(__file__).parent.parent / "assets" / "ports.tsv"
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -90,15 +127,35 @@ _NGA_PUBS_API = "https://msi.nga.mil/api/publications"
 # WPI entries.  GeoNames supplement entries also lack this data.
 # If you have a supplementary data source with actual channel/contact data,
 # add it to ports.tsv manually or extend fetch_ports.py.
-_VHF_COLS      = ("comm_vhf", "communications_vhf")          # not in current WPI CSV
-_PHONE_COLS    = ("comm_phone", "comm_radio_tel")              # not in current WPI CSV
-_CALLSIGN_COLS = ("radio_call_sign", "call_sign")              # not in current WPI CSV
-_SIZE_COLS     = ("harbor_size",)
-_LAT_COLS      = ("latitude_dec", "latitude")
-_LON_COLS      = ("longitude_dec", "longitude")
-_NAME_COLS     = ("port_name", "main_port_name")
-_COUNTRY_COLS  = ("country_code", "country")
-_INDEX_COLS    = ("world_port_number", "world_port_index_number", "index_no")
+_VHF_COLS          = ("comm_vhf", "communications_vhf")      # not in current WPI CSV
+_PHONE_COLS        = ("comm_phone", "comm_radio_tel")          # not in current WPI CSV
+_CALLSIGN_COLS     = ("radio_call_sign", "call_sign")          # not in current WPI CSV
+_SIZE_COLS         = ("harbor_size",)
+_LAT_COLS          = ("latitude_dec", "latitude")
+_LON_COLS          = ("longitude_dec", "longitude")
+_NAME_COLS         = ("port_name", "main_port_name")
+_COUNTRY_COLS      = ("country_code", "country")
+_INDEX_COLS        = ("world_port_number", "world_port_index_number", "index_no")
+
+# Navigation detail columns (new extended fields)
+_HARBOR_TYPE_COLS     = ("harbor_type",)
+_HARBOR_USE_COLS      = ("harbor_use",)
+_SHELTER_COLS         = ("shelter_afforded", "shelter")
+_TIDAL_RANGE_COLS     = ("tidal_range_m",)
+_CHANNEL_DEPTH_COLS   = ("channel_depth_m",)
+_MAX_VESSEL_LEN_COLS  = ("maximum_vessel_length_m",)
+_CHART_COLS           = ("standard_nautical_chart",)
+_NAVAREA_COLS         = ("navarea",)
+_PUBLICATION_COLS     = ("sailing_direction_or_publication", "sailing_directions")
+_PUB_LINK_COLS        = ("publication_link",)
+_PILOT_COMPULSORY_COLS = ("pilotage_compulsory",)
+_PILOT_AVAILABLE_COLS  = ("pilotage_available",)
+_PILOT_ADVISABLE_COLS  = ("pilotage_advisable",)
+_ENTRY_TIDE_COLS      = ("entrance_restriction_tide",)
+_ENTRY_SWELL_COLS     = ("entrance_restriction_heavy_swell",)
+_ENTRY_ICE_COLS       = ("entrance_restriction_ice",)
+_ENTRY_OTHER_COLS     = ("entrance_restriction_other",)
+_FIRST_PORT_COLS      = ("first_port_of_entry",)
 
 # tag -> tuple of candidate column names (any edition spelling)
 _FACILITY_COLS: dict[str, tuple] = {
@@ -150,20 +207,39 @@ def _parse_wpi_csv_reader(header: list[str], reader) -> list[dict]:
     h_norm = [_norm(c) for c in header]
 
     ci = {k: _col(header, v) for k, v in {
-        "name":    _NAME_COLS,
-        "country": _COUNTRY_COLS,
-        "lat":     _LAT_COLS,
-        "lon":     _LON_COLS,
-        "size":    _SIZE_COLS,
-        "vhf":     _VHF_COLS,
-        "phone":   _PHONE_COLS,
-        "sign":    _CALLSIGN_COLS,
-        "index":   _INDEX_COLS,
+        "name":         _NAME_COLS,
+        "country":      _COUNTRY_COLS,
+        "lat":          _LAT_COLS,
+        "lon":          _LON_COLS,
+        "size":         _SIZE_COLS,
+        "vhf":          _VHF_COLS,
+        "phone":        _PHONE_COLS,
+        "sign":         _CALLSIGN_COLS,
+        "index":        _INDEX_COLS,
+        # Navigation detail fields
+        "harbor_type":  _HARBOR_TYPE_COLS,
+        "harbor_use":   _HARBOR_USE_COLS,
+        "shelter":      _SHELTER_COLS,
+        "tidal":        _TIDAL_RANGE_COLS,
+        "ch_depth":     _CHANNEL_DEPTH_COLS,
+        "max_len":      _MAX_VESSEL_LEN_COLS,
+        "chart":        _CHART_COLS,
+        "navarea":      _NAVAREA_COLS,
+        "publication":  _PUBLICATION_COLS,
+        "pub_link":     _PUB_LINK_COLS,
+        "pilot_comp":   _PILOT_COMPULSORY_COLS,
+        "pilot_avail":  _PILOT_AVAILABLE_COLS,
+        "pilot_advis":  _PILOT_ADVISABLE_COLS,
+        "entry_tide":   _ENTRY_TIDE_COLS,
+        "entry_swell":  _ENTRY_SWELL_COLS,
+        "entry_ice":    _ENTRY_ICE_COLS,
+        "entry_other":  _ENTRY_OTHER_COLS,
+        "first_port":   _FIRST_PORT_COLS,
     }.items()}
 
     # Columns that must exist for basic parsing to work.
     _REQUIRED = {"name", "lat", "lon", "country"}
-    # Columns absent in the current WPI CSV (known data limitation, not an error).
+    # Columns absent in the current WPI CSV (known limitation, not an error).
     _KNOWN_ABSENT = {"vhf", "phone", "sign"}
 
     found   = {k: v for k, v in ci.items() if v >= 0}
@@ -211,18 +287,57 @@ def _parse_wpi_csv_reader(header: list[str], reader) -> list[dict]:
             if idx >= 0 and idx < len(row)
             and row[idx].strip().upper() in ("Y", "YES", "1")
         ]
+
+        # Pilotage — combine flags into a readable string
+        pilotage_parts = []
+        if g("pilot_comp").upper() in ("Y", "YES"): pilotage_parts.append("Compulsory")
+        if g("pilot_avail").upper() in ("Y", "YES"): pilotage_parts.append("Available")
+        if g("pilot_advis").upper() in ("Y", "YES"): pilotage_parts.append("Advisable")
+        pilotage_str = ", ".join(pilotage_parts)
+
+        # Entry restrictions — only keep ones that apply
+        restrictions = []
+        if g("entry_tide").upper()  in ("Y", "YES"): restrictions.append("Tide")
+        if g("entry_swell").upper() in ("Y", "YES"): restrictions.append("Heavy Swell")
+        if g("entry_ice").upper()   in ("Y", "YES"): restrictions.append("Ice")
+        if g("entry_other").upper() in ("Y", "YES"): restrictions.append("Other")
+        restrictions_str = ", ".join(restrictions)
+
+        def gf(key: str) -> str:
+            """Get float field as formatted string (empty if zero / unparseable)."""
+            val = g(key)
+            try:
+                f = float(val)
+                return "" if f == 0.0 else val
+            except ValueError:
+                return ""
+
         rows.append({
-            "name":       name,
-            "country":    (g("country") + "  ")[:2].upper().strip(),
-            "lat":        lat,
-            "lon":        lon,
-            "type":       "PRT",
-            "size":       g("size").upper(),
-            "vhf":        _clean_vhf(g("vhf")),
-            "phone":      g("phone"),
-            "call_sign":  g("sign"),
-            "wpi_index":  g("index"),
-            "facilities": "|".join(facilities),
+            "name":               name,
+            "country":            (g("country") + "  ")[:2].upper().strip(),
+            "lat":                lat,
+            "lon":                lon,
+            "type":               "PRT",
+            "size":               g("size").upper(),
+            "vhf":                _clean_vhf(g("vhf")),
+            "phone":              g("phone"),
+            "call_sign":          g("sign"),
+            "wpi_index":          g("index"),
+            "facilities":         "|".join(facilities),
+            # Navigation detail fields (new cols 11-23)
+            "harbor_type":        g("harbor_type"),
+            "harbor_use":         g("harbor_use"),
+            "shelter":            g("shelter").upper()[:1],  # E/G/F/P
+            "tidal_range_m":      gf("tidal"),
+            "channel_depth_m":    gf("ch_depth"),
+            "max_vessel_length_m": gf("max_len"),
+            "chart":              g("chart"),
+            "navarea":            g("navarea"),
+            "publication":        g("publication"),
+            "publication_link":   g("pub_link"),
+            "pilotage":           pilotage_str,
+            "entry_restrictions": restrictions_str,
+            "first_port_entry":   g("first_port").upper()[:1],  # Y/N
         })
     return rows
 
@@ -512,7 +627,11 @@ def fetch_geonames(user: str, cache: dict,
     print(f"  {total_pairs} GeoNames country/code pairs{scope_note}: "
           f"{done_pairs} cached, {total_pairs - done_pairs} to fetch.")
 
+    to_fetch = total_pairs - done_pairs
+    prog = _Progress(to_fetch) if to_fetch > 0 else None
+
     pair_num = 0
+    fetched_pairs = 0
     abort = False
     for feat_code in GEONAMES_CODES:
         if abort:
@@ -533,8 +652,12 @@ def fetch_geonames(user: str, cache: dict,
 
             cache[cache_key] = {"done": not fatal, "rows": rows}
             newly_fetched += len(rows)
+            fetched_pairs += 1
 
-            if pair_num % 20 == 0:
+            if prog:
+                prog.update(detail=f"{feat_code}:{country} +{len(rows)}")
+
+            if fetched_pairs % 20 == 0:
                 _cache_save(cache)  # flush periodically to limit Ctrl-C data loss
 
             if fatal:
@@ -546,7 +669,11 @@ def fetch_geonames(user: str, cache: dict,
 
         _cache_save(cache)
         if newly_fetched:
-            print(f"  {feat_code}: {newly_fetched} new entries fetched.")
+            sys.stderr.write(f"\r  {feat_code}: {newly_fetched} new entries.          \n")
+            sys.stderr.flush()
+
+    if prog:
+        prog.finish()
 
 
 # ── OpenStreetMap supplement via Overpass API ─────────────────────────────────
@@ -614,14 +741,21 @@ def fetch_osm(countries: list[str], cache: dict) -> None:
     """Query Overpass for marinas/harbours in each listed country.
     Already-cached countries are skipped — safe to re-run."""
     seen: set[tuple] = set()
+    to_fetch = [c for c in countries
+                if not cache.get(f"{_OSM_CACHE_PREFIX}:{c}", {}).get("done")]
+    prog = _Progress(len(to_fetch)) if to_fetch else None
+    fetched = 0
 
     for country in countries:
         cache_key = f"{_OSM_CACHE_PREFIX}:{country}"
         if cache.get(cache_key, {}).get("done"):
-            print(f"  OSM {country}: already cached, skipping.")
             continue
 
-        print(f"  OSM {country}: querying Overpass…")
+        fetched += 1
+        if prog:
+            prog.update(0, detail=f"querying {country}…")
+        else:
+            print(f"  OSM {country}: querying Overpass…")
         raw = _overpass(_overpass_query(country))
         if raw is None:
             continue
@@ -674,11 +808,19 @@ def fetch_osm(countries: list[str], cache: dict) -> None:
             })
 
         vhf_count = sum(1 for r in rows if r["vhf"])
-        print(f"  OSM {country}: {len(rows)} entries ({vhf_count} with VHF).")
+        if prog:
+            prog.update(detail=f"{country}: {len(rows)} entries")
+        else:
+            print(f"  OSM {country}: {len(rows)} entries ({vhf_count} with VHF).")
 
         cache[cache_key] = {"done": True, "rows": rows}
         _cache_save(cache)
         time.sleep(1.0)  # be polite to the Overpass server
+
+    if prog:
+        total_rows = sum(len(v["rows"]) for k, v in cache.items()
+                         if k.startswith(_OSM_CACHE_PREFIX + ":") and v.get("done"))
+        prog.finish(f"{total_rows} total OSM entries.")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -769,23 +911,54 @@ def main():
         r["name"].lower()
     ))
 
-    # ── Write TSV ─────────────────────────────────────────────────────────────
+    # ── Write TSV (24 columns) ────────────────────────────────────────────────
+    _EMPTY_NAV = {  # defaults for GeoNames/OSM rows that lack navigation fields
+        "harbor_type": "", "harbor_use": "", "shelter": "",
+        "tidal_range_m": "", "channel_depth_m": "", "max_vessel_length_m": "",
+        "chart": "", "navarea": "", "publication": "", "publication_link": "",
+        "pilotage": "", "entry_restrictions": "", "first_port_entry": "",
+    }
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
-        f.write("name\tcountry\tlat\tlon\ttype\tsize\tvhf\tphone\tcall_sign\twpi_index\tfacilities\n")
+        f.write(
+            "name\tcountry\tlat\tlon\ttype\tsize\tvhf\tphone\tcall_sign"
+            "\twpi_index\tfacilities"
+            "\tharbor_type\tharbor_use\tshelter"
+            "\ttidal_range_m\tchannel_depth_m\tmax_vessel_length_m"
+            "\tchart\tnavarea\tpublication\tpublication_link"
+            "\tpilotage\tentry_restrictions\tfirst_port_entry\n"
+        )
+        def clean(s: str) -> str:
+            return str(s).replace("\t", " ").replace("\n", " ")
+
         for r in all_rows:
+            n = {**_EMPTY_NAV, **r}  # merge so GeoNames/OSM rows get empty nav fields
             f.write("\t".join([
-                r["name"].replace("\t", " "),
-                r["country"],
-                str(r["lat"]),
-                str(r["lon"]),
-                r["type"],
-                r["size"],
-                r["vhf"],
-                r["phone"].replace("\t", " "),
-                r["call_sign"].replace("\t", " "),
-                r["wpi_index"],
-                r["facilities"],
+                clean(n["name"]),
+                clean(n["country"]),
+                str(n["lat"]),
+                str(n["lon"]),
+                clean(n["type"]),
+                clean(n["size"]),
+                clean(n["vhf"]),
+                clean(n["phone"]),
+                clean(n["call_sign"]),
+                clean(n["wpi_index"]),
+                clean(n["facilities"]),
+                clean(n["harbor_type"]),
+                clean(n["harbor_use"]),
+                clean(n["shelter"]),
+                clean(n["tidal_range_m"]),
+                clean(n["channel_depth_m"]),
+                clean(n["max_vessel_length_m"]),
+                clean(n["chart"]),
+                clean(n["navarea"]),
+                clean(n["publication"]),
+                clean(n["publication_link"]),
+                clean(n["pilotage"]),
+                clean(n["entry_restrictions"]),
+                clean(n["first_port_entry"]),
             ]) + "\n")
 
     # Cache is intentionally NOT cleared here — it persists for future runs.

@@ -96,24 +96,48 @@ class CityService {
       final lon = double.tryParse(p[3]);
       if (lat == null || lon == null) continue;
 
-      // Column layout by file:
-      //   4 columns  — legacy city format (name, country, lat, lon)
-      //   6 columns  — city extended  (+ population, timezone)
-      //   9 columns  — port format    (+ type, size, vhf, phone, call_sign)
-      String get(int idx) => (idx < p.length) ? p[idx].trim() : '';
+      // Column layout — all files are backward-compatible (missing cols = ''/0):
+      //   4  cols — legacy city  (name, country, lat, lon)
+      //   6  cols — city ext.   (+ population[4], timezone[5])
+      //  11  cols — port basic  (+ type[4], size[5], vhf[6], phone[7],
+      //                            call_sign[8], wpi_index[9], facilities[10])
+      //  24  cols — port ext.   (+ 13 navigation fields at cols 11-23)
+      //
+      // Distinction: col-count >= 8 → port format; < 8 → city format.
+      String g(int idx) => (idx < p.length) ? p[idx].trim() : '';
+      double gd(int idx) => double.tryParse(g(idx)) ?? 0.0;
+      final isPort = p.length >= 8;
 
       cities.add(City(
-        name:        p[0].trim(),
-        country:     p[1].trim(),
-        lat:         lat,
-        lon:         lon,
-        population:  int.tryParse(get(4)) ?? 0,
-        timezone:    get(5),
-        portType:    get(6),
-        harbourSize: get(7),
-        vhf:         get(8),
-        phone:       get(9),
-        callSign:    get(10),
+        name:               p[0].trim(),
+        country:            p[1].trim(),
+        lat:                lat,
+        lon:                lon,
+        // City-only fields (cols 4-5 hold port data in port TSVs)
+        population:         isPort ? 0 : (int.tryParse(g(4)) ?? 0),
+        timezone:           isPort ? '' : g(5),
+        // Port basic fields (cols 4-10 in port TSVs)
+        portType:           isPort ? g(4)  : '',
+        harbourSize:        isPort ? g(5)  : '',
+        vhf:                isPort ? g(6)  : '',
+        phone:              isPort ? g(7)  : '',
+        callSign:           isPort ? g(8)  : '',
+        wpiIndex:           isPort ? g(9)  : '',
+        facilities:         isPort ? g(10) : '',
+        // Navigation detail fields (cols 11-23, port extended TSV only)
+        harborType:         g(11),
+        harborUse:          g(12),
+        shelter:            g(13),
+        tidalRangeM:        gd(14),
+        channelDepthM:      gd(15),
+        maxVesselLengthM:   gd(16),
+        chart:              g(17),
+        navarea:            g(18),
+        publication:        g(19),
+        publicationLink:    g(20),
+        pilotage:           g(21),
+        entryRestrictions:  g(22),
+        firstPortEntry:     g(23),
       ));
     }
     return cities;

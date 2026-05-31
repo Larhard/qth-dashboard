@@ -108,33 +108,45 @@ class _HomeScreenState extends State<HomeScreen>
   //        by emitting only long-wavelength light.  No greens, blues, or ambers.
   bool _dayMode = GetStorage().read<bool>('day_mode') ?? true;
 
+  // ── Night palette target: 4 levels of dim red, no other colours ─────────────
+  //   Primary   0xFFCC3333  — main data (heading degrees, coordinates)
+  //   Secondary 0xFF882222  — supporting (speed, city name, bearing, MOB name)
+  //   Tertiary  0xFF661111  — labels (source, TRK, alt/acc, hints)
+  //   Ghost     0xFF441111  — barely-there (dividers, secondary arrow, borders)
+
   // Text hierarchy
   Color get _cText1 => _dayMode ? Colors.white                : const Color(0xFFCC3333);
   Color get _cText2 => _dayMode ? const Color(0xFFEEEEEE)     : const Color(0xFF882222);
-  Color get _cText3 => _dayMode ? const Color(0xFFCCCCCC)     : const Color(0xFF551111);
+  Color get _cText3 => _dayMode ? const Color(0xFFCCCCCC)     : const Color(0xFF661111);
   // Element-specific
   Color get _cSpeed   => _dayMode ? const Color(0xFFD8D8D8)   : const Color(0xFF882222);
-  Color get _cAltAcc  => _dayMode ? const Color(0xFFCCCCCC)   : const Color(0xFF551111);
+  Color get _cAltAcc  => _dayMode ? const Color(0xFFCCCCCC)   : const Color(0xFF882222); // bumped from 551111
   Color get _cStale   => _dayMode ? const Color(0xFFFF7043)   : const Color(0xFFCC2222);
-  Color get _cLocator => _dayMode ? const Color(0xFF00E5FF)   : const Color(0xFF993333);
-  Color get _cLocatorLabel => _dayMode ? const Color(0xFF3DBFBF) : const Color(0xFF551111);
+  // IARU locator now green (matches GPS arrow + UTC clock) — freed cyan goes to port
+  Color get _cLocator => _dayMode ? const Color(0xFF55DD55)   : const Color(0xFF882222);
+  Color get _cLocatorLabel => _dayMode ? const Color(0xFF3DBF3D) : const Color(0xFF661111);
   Color get _cMgrs    => _dayMode ? const Color(0xFFFFA726)   : const Color(0xFF882222);
-  Color get _cMgrsLabel => _dayMode ? const Color(0xFFE65100) : const Color(0xFF551111);
+  Color get _cMgrsLabel => _dayMode ? const Color(0xFFE65100) : const Color(0xFF661111);
   Color get _cTime    => _dayMode
       ? (_timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D))
       : const Color(0xFF882222);
   Color get _cTimeLabel => _dayMode
       ? (_timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100))
-      : const Color(0xFF441111);
+      : const Color(0xFF661111);
   // GPS-lock toggle indicator
   Color get _cSaveLock => _dayMode ? const Color(0xFFFFAB40) : const Color(0xFF661111);
   Color get _cLiveLock => _dayMode ? const Color(0xFF26C6DA) : const Color(0xFF992222);
+  // Secondary heading arrow — ghost level in night (no extra Opacity needed)
+  Color get _cSecondaryArrow => _dayMode ? Colors.white : const Color(0xFF441111);
   // Active waypoint / MOB card
   Color get _cWptName   => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
   Color get _cWptArrow  => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
   Color get _cWptData   => _dayMode ? const Color(0xFFFF2020) : const Color(0xFF771111);
-  Color get _cWptCoords => _dayMode ? const Color(0xFFCC2222) : const Color(0xFF661111);
-  Color get _cWptHint   => _dayMode ? const Color(0xFF4A1A1A) : const Color(0xFF331111);
+  Color get _cWptCoords => _dayMode ? const Color(0xFFDD3333) : const Color(0xFF882222); // brighter in both
+  Color get _cWptHint   => _dayMode ? const Color(0xFF4A1A1A) : const Color(0xFF441111);
+  // MOB button (emergency button — always visible but dimmer at night)
+  Color get _cMobBg   => _dayMode ? const Color(0xFFB71C1C) : const Color(0xFF661111);
+  Color get _cMobText => _dayMode ? Colors.white              : const Color(0xFFCC3333);
 
   void _toggleDayMode() {
     HapticFeedback.mediumImpact();
@@ -163,13 +175,13 @@ class _HomeScreenState extends State<HomeScreen>
     CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
     CityMode.precise  => const Color(0xFFFFD740),  // amber    — regional
     CityMode.detailed => const Color(0xFFC6FF00),  // lime     — local detail
-    CityMode.port     => const Color(0xFF29B6F6),  // nautical blue — port
+    CityMode.port     => const Color(0xFF00E5FF),  // nautical cyan (freed from IARU)
   };
   Color get _citySubColor => !_dayMode ? const Color(0xFF551111) : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFE65100),  // deep orange
     CityMode.precise  => const Color(0xFFFFAB40),  // light amber
     CityMode.detailed => const Color(0xFFAEEA00),  // darker lime
-    CityMode.port     => const Color(0xFF0288D1),  // medium blue
+    CityMode.port     => const Color(0xFF00ACC1),  // darker cyan sub-text
   };
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -936,13 +948,21 @@ class _HomeScreenState extends State<HomeScreen>
                 final secondaryBearing =
                     _usingGps ? compassBearing : (_track.bearing ?? _lastValidGpsHeading);
                 if (secondaryBearing == null) return const SizedBox.shrink();
-                return Opacity(
-                  opacity: 0.38,
-                  child: ArrowWidget(
-                      bearingDeg: secondaryBearing,
-                      color: _dayMode ? Colors.white : const Color(0xFF882222),
-                      size: 80),
-                );
+                // Day: ghost white at 38% opacity.
+                // Night: ghost red rendered directly — no extra Opacity
+                //        so the dim red isn't darkened further to near-black.
+                return _dayMode
+                    ? Opacity(
+                        opacity: 0.38,
+                        child: ArrowWidget(
+                            bearingDeg: secondaryBearing,
+                            color: _cSecondaryArrow,
+                            size: 80),
+                      )
+                    : ArrowWidget(
+                        bearingDeg: secondaryBearing,
+                        color: _cSecondaryArrow,
+                        size: 80);
               },
             ),
             ArrowWidget(bearingDeg: primary, color: color, size: 80),
@@ -1229,21 +1249,44 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── City ──────────────────────────────────────────────────────────────────
+  void _showCityDetails(NearestCity nc) {
+    HapticFeedback.lightImpact();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF111111),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
+      isScrollControlled: true,
+      builder: (_) => _CityDetailSheet(
+        nc: nc,
+        dayMode: _dayMode,
+        position: _position,
+        speedUnit: _speedUnit,
+      ),
+    );
+  }
+
   Widget _citySection(NearestCity nc) {
     final color = _cityColor;
     final subColor = _citySubColor;
     return GestureDetector(
       onTap: _toggleCityMode,
+      onLongPress: () => _showCityDetails(nc),
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
         ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 60),
         const SizedBox(width: 16),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(nc.city.name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 32, fontWeight: FontWeight.w700, color: color)),
+          // FittedBox scales the name down when it's too wide instead of
+          // cutting it off — short names stay at full 32 sp.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(nc.city.name,
+                style: TextStyle(
+                    fontSize: 32, fontWeight: FontWeight.w700, color: color)),
+          ),
           Row(children: [
             Text('${nc.bearingDeg.round()}°',
                 style: TextStyle(
@@ -1295,6 +1338,7 @@ class _HomeScreenState extends State<HomeScreen>
     final subColor = _citySubColor;
     return GestureDetector(
       onTap: _toggleCityMode,
+      onLongPress: () => _showCityDetails(nc),
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
         ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 56),
@@ -1303,10 +1347,13 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Flexible(
-                child: Text(nc.city.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.w700, color: color)),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(nc.city.name,
+                      style: TextStyle(
+                          fontSize: 28, fontWeight: FontWeight.w700, color: color)),
+                ),
               ),
               const SizedBox(width: 8),
               Text(nc.city.country,
@@ -1344,8 +1391,8 @@ class _HomeScreenState extends State<HomeScreen>
         child: ElevatedButton(
           onPressed: _addWaypoint,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFB71C1C),
-            foregroundColor: Colors.white,
+            backgroundColor: _cMobBg,
+            foregroundColor: _cMobText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
             elevation: 0,
@@ -1368,8 +1415,8 @@ class _HomeScreenState extends State<HomeScreen>
         child: ElevatedButton(
           onPressed: _addWaypoint,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFB71C1C),
-            foregroundColor: Colors.white,
+            backgroundColor: _cMobBg,
+            foregroundColor: _cMobText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
             elevation: 0,
@@ -1421,13 +1468,16 @@ class _HomeScreenState extends State<HomeScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(wp.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: nameFontSize,
-                                fontWeight: FontWeight.w900,
-                                color: _cWptName,
-                                letterSpacing: 1.5)),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(wp.name,
+                              style: TextStyle(
+                                  fontSize: nameFontSize,
+                                  fontWeight: FontWeight.w900,
+                                  color: _cWptName,
+                                  letterSpacing: 1.5)),
+                        ),
                         Row(children: [
                           Text('${b.round()}°',
                               style: TextStyle(
@@ -1504,6 +1554,225 @@ class _HomeScreenState extends State<HomeScreen>
         Text(left, style: style),
         Text(right, style: style),
       ],
+    );
+  }
+}
+
+// ── City / Port detail bottom sheet ──────────────────────────────────────────
+//
+// Shown when the user long-presses the city section.
+// Cities: population, timezone, bearing/distance.
+// Ports:  all available WPI navigation fields.
+
+class _CityDetailSheet extends StatelessWidget {
+  final NearestCity nc;
+  final bool dayMode;
+  final Position? position;
+  final SpeedUnit speedUnit;
+
+  const _CityDetailSheet({
+    required this.nc,
+    required this.dayMode,
+    required this.position,
+    required this.speedUnit,
+  });
+
+  bool get _isPort => nc.city.portType.isNotEmpty;
+
+  Color get _cLabel  => dayMode ? const Color(0xFF888888) : const Color(0xFF882222);
+  Color get _cValue  => dayMode ? Colors.white             : const Color(0xFFCC3333);
+  Color get _cAccent => dayMode ? const Color(0xFF00E5FF)  : const Color(0xFF882222);
+
+  Widget _section(String title) => Padding(
+    padding: const EdgeInsets.fromLTRB(0, 16, 0, 4),
+    child: Text(title.toUpperCase(),
+        style: TextStyle(
+            fontSize: 10, color: _cLabel,
+            letterSpacing: 2.5, fontWeight: FontWeight.w700)),
+  );
+
+  Widget _row(String label, String value, {Color? vc}) {
+    if (value.isEmpty || value == '0' || value == '0.0') return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 12, color: _cLabel)),
+          const SizedBox(width: 16),
+          Flexible(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: vc ?? _cValue,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _fmtPop(int pop) {
+    if (pop <= 0) return '';
+    if (pop >= 1000000) return '${(pop / 1000000).toStringAsFixed(1)}M';
+    if (pop >= 1000) return '${(pop / 1000).toStringAsFixed(0)}k';
+    return '$pop';
+  }
+
+  String _shelter(String s) => switch (s) {
+    'E' => 'Excellent',
+    'G' => 'Good',
+    'F' => 'Fair',
+    'P' => 'Poor',
+    _   => s,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final city = nc.city;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.55,
+      maxChildSize: 0.92,
+      builder: (_, ctrl) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF111111),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+        ),
+        child: Column(children: [
+          // Drag handle
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFF333333),
+                borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              controller: ctrl,
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+              children: [
+                // Header
+                Text(city.name,
+                    style: TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.w700,
+                        color: _cValue)),
+                const SizedBox(height: 4),
+                if (position != null) ...[
+                  Text(
+                    '${nc.bearingDeg.round()}°  ·  '
+                    '${formatDistanceUnit(nc.distKm, speedUnit)}  ·  '
+                    '${city.country}',
+                    style: TextStyle(fontSize: 13, color: _cLabel)),
+                ],
+
+                // ── City fields ───────────────────────────────────────────
+                if (!_isPort) ...[
+                  _section('Location'),
+                  _row('Country', city.country),
+                  _row('Population', _fmtPop(city.population)),
+                  _row('Timezone', city.timezone),
+                ],
+
+                // ── Port fields ───────────────────────────────────────────
+                if (_isPort) ...[
+                  _section('Port overview'),
+                  _row('Type', city.portType),
+                  _row('Harbour class', switch (city.harbourSize) {
+                    'L'  => 'Large',
+                    'M'  => 'Medium',
+                    'S'  => 'Small',
+                    'VS' => 'Very Small',
+                    _    => city.harbourSize,
+                  }),
+                  _row('Harbour type', city.harborType),
+                  _row('Primary use', city.harborUse),
+                  _row('Shelter', _shelter(city.shelter),
+                      vc: switch (city.shelter) {
+                        'E' => const Color(0xFF55DD55),
+                        'G' => const Color(0xFF9CCC65),
+                        'F' => const Color(0xFFFFD740),
+                        'P' => const Color(0xFFFF7043),
+                        _   => null,
+                      }),
+                  _row('NAVAREA', city.navarea),
+
+                  if (city.channelDepthM > 0 || city.tidalRangeM > 0 ||
+                      city.maxVesselLengthM > 0) ...[
+                    _section('Dimensions'),
+                    _row('Channel depth',
+                        city.channelDepthM > 0 ? '${city.channelDepthM} m' : ''),
+                    _row('Tidal range',
+                        city.tidalRangeM > 0 ? '${city.tidalRangeM} m' : ''),
+                    _row('Max vessel length',
+                        city.maxVesselLengthM > 0 ? '${city.maxVesselLengthM} m' : ''),
+                    _row('Chart', city.chart),
+                  ],
+
+                  if (city.pilotage.isNotEmpty ||
+                      city.firstPortEntry.isNotEmpty ||
+                      city.entryRestrictions.isNotEmpty) ...[
+                    _section('Entry requirements'),
+                    _row('First port of entry',
+                        city.firstPortEntry == 'Y' ? 'Yes' :
+                        city.firstPortEntry == 'N' ? 'No'  : ''),
+                    _row('Pilotage', city.pilotage),
+                    _row('Entry restrictions', city.entryRestrictions,
+                        vc: city.entryRestrictions.isNotEmpty
+                            ? const Color(0xFFFFD740) : null),
+                  ],
+
+                  if (city.vhf.isNotEmpty || city.phone.isNotEmpty ||
+                      city.callSign.isNotEmpty) ...[
+                    _section('Communications'),
+                    _row('VHF working channel', city.vhf.isNotEmpty
+                        ? 'Ch ${city.vhf.replaceAll(";", " / Ch ")}' : '',
+                        vc: _cAccent),
+                    _row('Call sign', city.callSign, vc: _cAccent),
+                    _row('Phone', city.phone),
+                  ],
+
+                  if (city.publication.isNotEmpty ||
+                      city.publicationLink.isNotEmpty) ...[
+                    _section('Publications'),
+                    _row('Sailing directions', city.publication),
+                    _row('Link', city.publicationLink,
+                        vc: dayMode ? const Color(0xFF29B6F6) : _cAccent),
+                  ],
+
+                  if (city.facilities.isNotEmpty) ...[
+                    _section('Facilities'),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: city.facilities.split('|')
+                          .where((f) => f.isNotEmpty)
+                          .map((f) => Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1A1A1A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                  color: const Color(0xFF333333), width: 1)),
+                            child: Text(f.replaceAll('_', ' '),
+                                style: TextStyle(
+                                    fontSize: 11, color: _cLabel)),
+                          ))
+                          .toList(),
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        ]),
+      ),
     );
   }
 }

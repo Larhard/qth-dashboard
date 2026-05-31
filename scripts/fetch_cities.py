@@ -21,6 +21,44 @@ import zipfile
 import io
 import os
 import sys
+import time
+
+
+# ── Progress helper ───────────────────────────────────────────────────────────
+
+def _fmt_dur(s: float) -> str:
+    if s < 60:   return f"{s:.0f}s"
+    if s < 3600: return f"{s / 60:.1f}m"
+    return f"{s / 3600:.1f}h"
+
+
+class Progress:
+    """Single-line progress display with elapsed time and ETA."""
+    def __init__(self, total: int, label: str = "") -> None:
+        self.total = total
+        self.done  = 0
+        self.start = time.monotonic()
+        self.label = label
+
+    def update(self, n: int = 1, detail: str = "") -> None:
+        self.done += n
+        elapsed = time.monotonic() - self.start
+        pct  = self.done / self.total * 100 if self.total else 0
+        rate = self.done / elapsed if elapsed > 0.05 else 0
+        eta  = (self.total - self.done) / rate if rate > 0 else 0
+        det  = f"  {detail}" if detail else ""
+        sys.stderr.write(
+            f"\r  [{self.done}/{self.total}] {pct:5.1f}%  "
+            f"elapsed {_fmt_dur(elapsed)}  ETA {_fmt_dur(eta)}{det}          "
+        )
+        sys.stderr.flush()
+
+    def finish(self, msg: str = "") -> None:
+        elapsed = time.monotonic() - self.start
+        sys.stderr.write(
+            f"\r  Done {self.done}/{self.total} in {_fmt_dur(elapsed)}.{' ' + msg if msg else ''}\n"
+        )
+        sys.stderr.flush()
 
 GEONAMES_URL = "https://download.geonames.org/export/dump/cities1000.zip"
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
@@ -64,20 +102,25 @@ def _write_tsv(path: str, cities: list) -> None:
 
 def main():
     print("Downloading cities1000.zip from GeoNames (~10 MB)...")
+    t0 = time.monotonic()
     try:
         with urllib.request.urlopen(GEONAMES_URL, timeout=120) as resp:
             data = resp.read()
     except Exception as e:
         print(f"Download failed: {e}", file=sys.stderr)
         sys.exit(1)
+    print(f"  Downloaded in {_fmt_dur(time.monotonic() - t0)}.")
 
     print("Parsing...")
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         with zf.open('cities1000.txt') as f:
             content = f.read().decode('utf-8')
 
+    lines = content.splitlines()
+    prog = Progress(len(lines), "cities")
     cities = []
-    for line in content.splitlines():
+    for line in lines:
+        prog.update(detail=f"{len(cities)} accepted")
         parts = line.split('\t')
         if len(parts) < 18:
             continue
@@ -94,23 +137,26 @@ def main():
         except (ValueError, IndexError):
             continue
 
+    prog.finish(f"{len(cities)} cities accepted.")
+
     # Sort by population descending so each subset is deterministic.
+    print("Sorting and writing...")
     cities.sort(key=lambda x: x[4], reverse=True)
 
     os.makedirs(ASSETS_DIR, exist_ok=True)
 
     # Level 1 -- top 5 000 worldwide (global overview)
     _write_tsv(LARGE_PATH, cities[:LARGE_N])
-    print(f"Saved {LARGE_N} cities → {LARGE_PATH}")
+    print(f"  Large:    {LARGE_N:7d} cities -> {LARGE_PATH}")
 
     # Level 2 -- all places with population >= 5 000 (regional)
     precise = [c for c in cities if c[4] >= PRECISE_MIN_POP]
     _write_tsv(PRECISE_PATH, precise)
-    print(f"Saved {len(precise)} cities → {PRECISE_PATH}")
+    print(f"  Precise:  {len(precise):7d} cities -> {PRECISE_PATH}")
 
     # Level 3 -- full dataset: population >= 1 000 (local, includes small towns)
     _write_tsv(DETAILED_PATH, cities)
-    print(f"Saved {len(cities)} cities → {DETAILED_PATH}")
+    print(f"  Detailed: {len(cities):7d} cities -> {DETAILED_PATH}")
 
 
 if __name__ == '__main__':
