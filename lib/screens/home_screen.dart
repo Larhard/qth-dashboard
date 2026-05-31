@@ -463,6 +463,7 @@ class _HomeScreenState extends State<HomeScreen>
           speedUnit: _speedUnit,
           coordFormat: _coordFormat,
           locatorType: _locatorType,
+          timeUtc: _timeUtc,
         ),
       ),
     );
@@ -662,7 +663,7 @@ class _HomeScreenState extends State<HomeScreen>
             valueListenable: _compassNotifier,
             builder: (_, compassBearing, __) {
               final secondaryBearing =
-                  _usingGps ? compassBearing : _lastValidGpsHeading;
+                  _usingGps ? compassBearing : (_trackBearing ?? _lastValidGpsHeading);
               if (secondaryBearing == null) return const SizedBox.shrink();
               return Opacity(
                 opacity: 0.38,
@@ -728,7 +729,7 @@ class _HomeScreenState extends State<HomeScreen>
               valueListenable: _compassNotifier,
               builder: (_, compassBearing, __) {
                 final secondaryBearing =
-                    _usingGps ? compassBearing : _lastValidGpsHeading;
+                    _usingGps ? compassBearing : (_trackBearing ?? _lastValidGpsHeading);
                 if (secondaryBearing == null) return const SizedBox.shrink();
                 return Opacity(
                   opacity: 0.38,

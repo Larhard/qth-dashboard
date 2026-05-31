@@ -13,6 +13,7 @@ class WaypointsScreen extends StatefulWidget {
   final SpeedUnit speedUnit;
   final CoordFormat coordFormat;
   final LocatorType locatorType;
+  final bool timeUtc;
 
   const WaypointsScreen({
     super.key,
@@ -20,6 +21,7 @@ class WaypointsScreen extends StatefulWidget {
     required this.speedUnit,
     required this.coordFormat,
     required this.locatorType,
+    required this.timeUtc,
   });
 
   @override
@@ -103,7 +105,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(_fmtTimestamp(wp.timestamp),
+          Text(_fmtTimestamp(wp.timestamp, widget.timeUtc),
               style: const TextStyle(color: Colors.white38, fontSize: 11)),
           const SizedBox(height: 2),
           Text('$latStr   $lonStr',
@@ -167,17 +169,15 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     );
   }
 
-  static String _fmtTimestamp(DateTime dt) {
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inSeconds < 60) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    final days = diff.inDays;
-    if (days < 7) return '${days}d ago';
-    final d = dt.toLocal();
-    return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}  '
-        '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}';
+  static String _fmtTimestamp(DateTime dt, bool utc) {
+    final d = utc ? dt.toUtc() : dt.toLocal();
+    final zone = utc ? 'UTC' : 'LCL';
+    return '${d.year}-'
+        '${d.month.toString().padLeft(2,'0')}-'
+        '${d.day.toString().padLeft(2,'0')} '
+        '${d.hour.toString().padLeft(2,'0')}:'
+        '${d.minute.toString().padLeft(2,'0')}:'
+        '${d.second.toString().padLeft(2,'0')} $zone';
   }
 }
 
