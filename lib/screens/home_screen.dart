@@ -251,17 +251,11 @@ class _HomeScreenState extends State<HomeScreen>
   // The position stream is cancelled when the screen turns off (see lifecycle
   // handler) and recreated here on resume, so the GNSS receiver isn't draining
   // power during long screen-off stretches on a hike.
-  // Shared handler — called from both normal and background streams.
+  // Shared handler — called from both the normal (foreground) and background
+  // (foreground-service) GPS streams.
   void _onPositionUpdate(Position pos) {
     _lastGpsFix = DateTime.now();
     if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
-
-    _cachedLatStr = formatLatF(pos.latitude, _coordFormat);
-    _cachedLonStr = formatLonF(pos.longitude, _coordFormat);
-    _cachedLocStr = _locStr(pos.latitude, pos.longitude);
-    _cachedAlt = pos.altitude;
-    _cachedAccuracy = pos.accuracy;
-    _gpsClockOffset = pos.timestamp.difference(DateTime.now());
 
     // GPS course is usable above ~0.5 m/s; cache at lower threshold so the
     // secondary arrow appears even at walking pace.
@@ -269,8 +263,26 @@ class _HomeScreenState extends State<HomeScreen>
       _lastValidGpsHeading = pos.heading;
     }
 
+    // Track bearing and declination run in both foreground and background —
+    // they are the primary benefit of LIVE mode (fresh TRK on unlock).
     _updateTrackBearing(pos);
     DeclinationService.instance.update(pos.latitude, pos.longitude, pos.altitude);
+
+    if (!mounted) {
+      // Screen is off (background foreground-service stream): skip all UI
+      // work — string formatting and city lookups are wasted CPU when nothing
+      // is visible. Cache the raw position; it will be displayed on resume.
+      _position = pos;
+      return;
+    }
+
+    // Foreground: update display caches and rebuild.
+    _cachedLatStr = formatLatF(pos.latitude, _coordFormat);
+    _cachedLonStr = formatLonF(pos.longitude, _coordFormat);
+    _cachedLocStr = _locStr(pos.latitude, pos.longitude);
+    _cachedAlt = pos.altitude;
+    _cachedAccuracy = pos.accuracy;
+    _gpsClockOffset = pos.timestamp.difference(DateTime.now());
 
     final needsCity = _lastCityCalcPos == null ||
         Geolocator.distanceBetween(
@@ -281,9 +293,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (needsCity) {
       _lastCityCalcPos = pos;
       final city = CityService.instance.nearest(pos.latitude, pos.longitude);
-      if (mounted) setState(() { _position = pos; _nearestCity = city; });
+      setState(() { _position = pos; _nearestCity = city; });
     } else {
-      if (mounted) setState(() => _position = pos);
+      setState(() => _position = pos);
     }
   }
 
@@ -817,7 +829,7 @@ class _HomeScreenState extends State<HomeScreen>
                 fontFeatures: [FontFeature.tabularFigures()]),
           ),
         ),
-        _lockModeWidget(sourceFontSize: 13, trkFontSize: 13),
+        _lockModeWidget(sourceFontSize: 14, trkFontSize: 14),
       ]),
     ]);
   }
@@ -882,7 +894,7 @@ class _HomeScreenState extends State<HomeScreen>
                     fontFeatures: [FontFeature.tabularFigures()]),
               ),
             ),
-            _lockModeWidget(sourceFontSize: 11, trkFontSize: 11),
+            _lockModeWidget(sourceFontSize: 12, trkFontSize: 12),
           ],
         ),
       ],
@@ -947,7 +959,7 @@ class _HomeScreenState extends State<HomeScreen>
                     size: sourceFontSize - 1, color: modeColor),
                 Text('@',
                     style: TextStyle(
-                        fontSize: sourceFontSize - 4,
+                        fontSize: sourceFontSize - 2,
                         color: modeColor,
                         height: 1.0)),
                 Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
@@ -1086,13 +1098,13 @@ class _HomeScreenState extends State<HomeScreen>
     return Row(children: [
       Text('alt $altStr',
           style: const TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               color: Color(0xFFAAAAAA),
               fontFeatures: [FontFeature.tabularFigures()])),
       const SizedBox(width: 12),
       Text('$accStr$staleStr',
           style: TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               color: stale ? const Color(0xFFFF7043) : const Color(0xFF999999),
               fontFeatures: const [FontFeature.tabularFigures()])),
     ]);
@@ -1354,7 +1366,7 @@ class _HomeScreenState extends State<HomeScreen>
               _wptDataRow(
                 left: _locStr(wp.lat, wp.lon),
                 right: formatElapsed(DateTime.now().difference(wp.timestamp)),
-                fontSize: 13,
+                fontSize: coordFontSize,
               ),
               SizedBox(height: portrait ? 6 : 4),
               const Align(
