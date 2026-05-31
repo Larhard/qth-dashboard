@@ -3,6 +3,7 @@ import '../utils/track_bearing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
+import 'package:get_storage/get_storage.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import '../models/waypoint.dart';
@@ -24,7 +25,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   // ── Constants ─────────────────────────────────────────────────────────────
   static const _gpsThresholdMs = 1.5;    // m/s ≈ 5.4 km/h
   static const _compassIntervalMs = 100; // ~10 Hz — slightly lower than before
@@ -88,6 +89,21 @@ class _HomeScreenState extends State<HomeScreen>
   bool _holding = false;
   double _clearProgress = 0.0;
 
+  // ── GPS-on-lock mode ───────────────────────────────────────────────────────
+  // When false (default) the GPS stream is cancelled on screen-off to save
+  // battery. When true, the stream keeps running so TRK stays live and the
+  // first glance after unlock shows fresh data instantly.
+  static const _toggleHoldMs = 1500;
+  static const _toggleRewindPerFrame = 0.08;
+  bool _gpsOnLock = false;
+  late final Ticker _toggleTicker;
+  final Stopwatch _toggleWatch = Stopwatch();
+  bool _toggling = false;
+  double _toggleProgress = 0.0;
+
+  static const _saveModeColor = Color(0xFF9E7000);  // dark amber — "limited"
+  static const _liveModeColor = Color(0xFF00838F);  // dark cyan  — "active"
+
   // ── Derived ───────────────────────────────────────────────────────────────
   bool get _usingGps {
     final p = _position;
@@ -96,7 +112,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   double get _heading => _usingGps ? _position!.heading : _compassHeading;
   Color get _headingColor => _usingGps ? const Color(0xFF55DD55) : Colors.white;
-  String get _sourceLabel => _usingGps ? 'GPS' : 'MAG';
 
   // Color progression follows the warm spectrum — orange → amber → lime —
   // so all three levels read as "the same concept at increasing resolution."
@@ -121,6 +136,8 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _holdTicker = createTicker(_onHoldTick);
+    _toggleTicker = createTicker(_onToggleTick);
+    _gpsOnLock = GetStorage().read<bool>('gps_on_lock') ?? false;
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
     _init();
   }
@@ -129,6 +146,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _holdTicker.dispose();
+    _toggleTicker.dispose();
     _compassNotifier.dispose();
     _posSub?.cancel();
     _compassSub?.cancel();
@@ -145,12 +163,15 @@ class _HomeScreenState extends State<HomeScreen>
       //  • GNSS receiver (stream cancelled — the big saving on long hikes)
       //  • 1 Hz stale timer (cancelled — no point waking the CPU for hidden UI)
       _compassSub?.pause();
-      _posSub?.cancel();
-      _posSub = null;
       _staleTimer?.cancel();
       _staleTimer = null;
       _cancelClear();
-      _track.clear();
+      _cancelToggle();
+      // GPS stream: keep alive in LIVE mode so TRK stays current during lock.
+      if (!_gpsOnLock) {
+        _posSub?.cancel();
+        _posSub = null;
+      }
     } else if (state == AppLifecycleState.resumed) {
       _compassSub?.resume();
       // Restart everything that was torn down on pause.
@@ -332,6 +353,43 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _clearProgress = 0.0);
     HapticFeedback.heavyImpact();
     _deactivateWaypoint();
+  }
+
+  // ── GPS-on-lock toggle ────────────────────────────────────────────────────
+  void _startToggle() {
+    _toggling = true;
+    _toggleWatch..reset()..start();
+    if (!_toggleTicker.isActive) _toggleTicker.start();
+  }
+
+  void _cancelToggle() {
+    _toggling = false;
+    _toggleWatch..stop()..reset();
+    if (_toggleProgress > 0 && !_toggleTicker.isActive) _toggleTicker.start();
+  }
+
+  void _onToggleTick(Duration _) {
+    if (_toggling) {
+      final p = (_toggleWatch.elapsedMilliseconds / _toggleHoldMs).clamp(0.0, 1.0);
+      if (p != _toggleProgress) setState(() => _toggleProgress = p);
+      if (_toggleWatch.elapsedMilliseconds >= _toggleHoldMs) _finishToggle();
+    } else {
+      final next = (_toggleProgress - _toggleRewindPerFrame).clamp(0.0, 1.0);
+      setState(() => _toggleProgress = next);
+      if (next <= 0.0) _toggleTicker.stop();
+    }
+  }
+
+  void _finishToggle() {
+    _toggling = false;
+    _toggleWatch..stop()..reset();
+    _toggleTicker.stop();
+    HapticFeedback.lightImpact();
+    setState(() {
+      _toggleProgress = 0.0;
+      _gpsOnLock = !_gpsOnLock;
+    });
+    GetStorage().write('gps_on_lock', _gpsOnLock);
   }
 
   String _locStr(double lat, double lon) =>
@@ -672,16 +730,7 @@ class _HomeScreenState extends State<HomeScreen>
                 fontFeatures: [FontFeature.tabularFigures()]),
           ),
         ),
-        Text(_sourceLabel,
-            style: const TextStyle(
-                fontSize: 13, color: Color(0xFFBBBBBB), letterSpacing: 2.5)),
-        Text(
-          _track.bearing != null ? 'TRK ${_track.bearing!.round()}°' : 'TRK ---',
-          style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFFB0B0B0),
-              letterSpacing: 1.5),
-        ),
+        _lockModeWidget(sourceFontSize: 13, trkFontSize: 13),
       ]),
     ]);
   }
@@ -746,17 +795,68 @@ class _HomeScreenState extends State<HomeScreen>
                     fontFeatures: [FontFeature.tabularFigures()]),
               ),
             ),
-            Text(_sourceLabel,
-                style: const TextStyle(
-                    fontSize: 11, color: Color(0xFFBBBBBB), letterSpacing: 2.0)),
-            Text(
-              _track.bearing != null ? 'TRK ${_track.bearing!.round()}°' : 'TRK ---',
-              style: const TextStyle(
-                  fontSize: 11, color: Color(0xFFB0B0B0), letterSpacing: 1.5),
-            ),
+            _lockModeWidget(sourceFontSize: 11, trkFontSize: 11),
           ],
         ),
       ],
+    );
+  }
+
+  // ── GPS lock mode indicator ───────────────────────────────────────────────
+  // Shows the current heading source (GPS/MAG) and the GPS-during-lock mode
+  // (SAVE / LIVE). Hold for 1.5 s to toggle the mode.
+  Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
+    final modeLabel = _gpsOnLock ? 'LIVE' : 'SAVE';
+    final modeColor = _gpsOnLock ? _liveModeColor : _saveModeColor;
+    // Progress bar fills toward the *target* mode color (opposite of current).
+    final progressColor = _gpsOnLock ? _saveModeColor : _liveModeColor;
+
+    return Listener(
+      onPointerDown: (_) => _startToggle(),
+      onPointerUp: (_) => _cancelToggle(),
+      onPointerCancel: (_) => _cancelToggle(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(_usingGps ? 'GPS' : 'MAG',
+                style: TextStyle(
+                    fontSize: sourceFontSize,
+                    color: const Color(0xFFBBBBBB),
+                    letterSpacing: 2.5)),
+            const SizedBox(width: 7),
+            Text(modeLabel,
+                style: TextStyle(
+                    fontSize: sourceFontSize - 2,
+                    color: modeColor,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w600)),
+          ]),
+          Text(
+            _track.bearing != null
+                ? 'TRK ${_track.bearing!.round()}°'
+                : 'TRK ---',
+            style: TextStyle(
+                fontSize: trkFontSize,
+                color: const Color(0xFFB0B0B0),
+                letterSpacing: 1.5),
+          ),
+          // Progress bar — only visible while holding
+          if (_toggleProgress > 0)
+            SizedBox(
+              width: 64,
+              height: 2,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(
+                  widthFactor: _toggleProgress,
+                  child: Container(color: progressColor),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
