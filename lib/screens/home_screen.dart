@@ -171,6 +171,8 @@ class _HomeScreenState extends State<HomeScreen>
       ? (_usingGps ? const Color(0xFF55DD55) : Colors.white)
       : (_usingGps ? const Color(0xFFCC2222) : const Color(0xFF882222));
 
+  Color get _secondaryHeadingColor => _dayMode ? Colors.white : const Color(0xFF882222);
+
   // City accent colours collapse to dim red in night mode.
   Color get _cityColor => !_dayMode ? const Color(0xFF882222) : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
@@ -896,7 +898,7 @@ class _HomeScreenState extends State<HomeScreen>
                 opacity: 0.38,
                 child: ArrowWidget(
                     bearingDeg: secondaryBearing,
-                    color: Colors.white,
+                    color: _secondaryHeadingColor,
                     size: 80),
               );
             },
