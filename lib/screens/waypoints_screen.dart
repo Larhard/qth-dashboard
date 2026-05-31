@@ -125,13 +125,15 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
     final locColor = _locColor(widget.locatorType);
 
-    return ListTile(
+    final inkColor = (_day ? Colors.white : const Color(0xFF882222))
+        .withValues(alpha: 0.12);
+    return Theme(
+      data: Theme.of(context).copyWith(
+        splashColor: inkColor,
+        highlightColor: inkColor,
+      ),
+      child: ListTile(
       tileColor: isActive ? const Color(0xFF1A0000) : Colors.transparent,
-      splashColor: (_day ? Colors.white : const Color(0xFF882222)).withValues(alpha: 0.12),
-      overlayColor: WidgetStateProperty.resolveWith((states) =>
-          states.contains(WidgetState.pressed)
-              ? (_day ? Colors.white : const Color(0xFF882222)).withValues(alpha: 0.12)
-              : null),
       leading: Icon(
         isActive ? Icons.navigation : Icons.location_on_outlined,
         color: isActive ? _cActive : _cDim,
@@ -203,7 +205,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         HapticFeedback.mediumImpact();
         _showEditSheet(wp);
       },
-    );
+    ),   // ListTile
+    );   // Theme
   }
 
   void _showEditSheet(Waypoint? existing) {
