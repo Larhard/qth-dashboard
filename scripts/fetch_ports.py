@@ -5,51 +5,66 @@ Builds assets/ports.tsv from two sources:
 Primary — NGA World Port Index (WPI, Publication 150)
   Free US government publication covering ~4,000 commercial ports worldwide.
   Contains harbour size, VHF working channel, radio call sign, and many
-  facility fields.  Download: https://msi.nga.mil/Publications/WPI
-  WPI ZIP URL is queried automatically from the NGA MSI API.
+  facility fields.  https://msi.nga.mil/Publications/WPI
 
-Supplementary — GeoNames web service
+Supplementary — GeoNames web service (https://secure.geonames.org)
   Covers smaller harbours, marinas, landings and anchorages not in the WPI.
-  Register free at https://www.geonames.org/login, then pass --user YOUR_NAME.
-  Falls back to the 'demo' account if no username is given (rate-limited).
+  Requires a free GeoNames account with free web services enabled:
+    1. Register:  https://www.geonames.org/login
+    2. Enable:    https://www.geonames.org/manageaccount
+       (tick "Free Web Services" and save)
+    3. Run:  python scripts/fetch_ports.py --user YOUR_USERNAME
 
 TSV columns (11):
-  name       port/harbour name
-  country    ISO-3166-1 alpha-2 country code
-  lat        decimal latitude
-  lon        decimal longitude
-  type       GeoNames feature code: PRT / HBR / MRNA / LDNG / ANCH
-  size       WPI harbour size: L / M / S / VS  (empty for GeoNames-only entries)
-  vhf        primary VHF working channel(s), semicolon-separated, e.g. "12;74"
-  phone      harbour-master / operations phone
-  call_sign  ITU radio call sign
-  wpi_index  WPI world port number (empty for GeoNames-only entries)
-  facilities pipe-separated WPI facility flags, e.g. "FUEL|WATER|PROVISIONS"
-
-Port-size note
-  WPI classifies ports by HARBOR_SIZE:
-    L  = Large  (major commercial port, can handle large ocean-going vessels)
-    M  = Medium (handles medium cargo / ro-ro)
-    S  = Small  (coastal / feeder service)
-    VS = Very Small (local / fishing / recreational)
-  If you later want two separate CityModes (port_major / port_marina) split on
-  size: L+M → port_major, S+VS → port_marina.
+  name, country, lat, lon, type, size, vhf, phone, call_sign, wpi_index, facilities
 
 Usage:
-  python scripts/fetch_ports.py [--user YOUR_GEONAMES_USERNAME]
+  python scripts/fetch_ports.py [--user USERNAME] [--wpi-file WPI.zip] [--no-wpi] [--no-geonames]
 """
-import argparse, csv, io, json, re, sys, time, urllib.request, zipfile
+import argparse, csv, io, json, re, sys, time, urllib.error, urllib.request, zipfile
 from pathlib import Path
 
 OUT = Path(__file__).parent.parent / "assets" / "ports.tsv"
 
+# ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+# NGA blocks the default Python-urllib user-agent with 403.
+# A standard browser User-Agent string resolves this.
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/zip, application/octet-stream, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://msi.nga.mil/Publications/WPI",
+}
+
+def _get(url: str, *, headers: dict | None = None, timeout: int = 60) -> bytes | None:
+    req = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        print(f"  HTTP {e.code} {e.reason}  ({url})", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"  Error fetching {url}: {e}", file=sys.stderr)
+        return None
+
+
 # ── WPI ───────────────────────────────────────────────────────────────────────
 
-WPI_API = ("https://msi.nga.mil/api/publications/download"
-           "?type=view&key=16694312/SFH00000/WPI.zip")
+# NGA WPI download URL.  The key encodes the publication path in NGA's storage.
+# If this returns 403 even with browser headers, download the ZIP manually from
+#   https://msi.nga.mil/Publications/WPI
+# and pass it with:  --wpi-file /path/to/WPI.zip
+WPI_URL = (
+    "https://msi.nga.mil/api/publications/download"
+    "?type=view&key=16694312/SFH00000/WPI.zip"
+)
 
-# WPI CSV column names (lowercase, spaces replaced by _).
-# Actual names may vary slightly between WPI editions; we match by pattern.
 _VHF_COLS      = ("comm_vhf",)
 _PHONE_COLS    = ("comm_phone", "comm_radio_tel")
 _CALLSIGN_COLS = ("radio_call_sign", "call_sign")
@@ -60,7 +75,6 @@ _NAME_COLS     = ("port_name", "main_port_name")
 _COUNTRY_COLS  = ("country_code", "country")
 _INDEX_COLS    = ("world_port_number", "index_no")
 
-# WPI facility columns and their compact tag.
 _FACILITY_MAP = {
     "fuel_oil":           "FUEL_OIL",
     "fuel_diesel":        "DIESEL",
@@ -76,7 +90,6 @@ _FACILITY_MAP = {
 
 
 def _col(header: list[str], candidates: tuple) -> int:
-    """Return index of first matching candidate column, or -1."""
     h = [c.lower().replace(" ", "_") for c in header]
     for name in candidates:
         if name in h:
@@ -85,46 +98,38 @@ def _col(header: list[str], candidates: tuple) -> int:
 
 
 def _clean_vhf(raw: str) -> str:
-    """Normalise VHF field: extract channel numbers, join with ';'."""
+    """Normalise WPI VHF field → semicolon-separated channel numbers."""
     if not raw:
         return ""
-    # WPI VHF field examples: "VHF Ch 12  Ch 74", "CH 16/12", "12", "VHF 16"
     channels = re.findall(r'\b(\d{1,2})\b', raw)
-    # Filter to valid marine VHF channels (1-88)
     channels = [c for c in channels if 1 <= int(c) <= 88]
-    return ";".join(dict.fromkeys(channels))  # deduplicate, keep order
+    return ";".join(dict.fromkeys(channels))
 
 
-def fetch_wpi() -> list[dict]:
-    print("Downloading WPI from NGA (~3 MB)…")
-    try:
-        with urllib.request.urlopen(WPI_API, timeout=60) as resp:
-            raw = resp.read()
-    except Exception as e:
-        print(f"  WPI download failed: {e}", file=sys.stderr)
-        return []
-
+def _parse_wpi_zip(data: bytes) -> list[dict]:
     rows = []
-    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
         csv_name = next((n for n in zf.namelist() if n.lower().endswith(".csv")), None)
         if not csv_name:
-            print("  No CSV found in WPI archive.", file=sys.stderr)
+            print("  No CSV found in WPI archive.  Files present:", file=sys.stderr)
+            for n in zf.namelist():
+                print(f"    {n}", file=sys.stderr)
             return []
         with zf.open(csv_name) as f:
             reader = csv.reader(io.TextIOWrapper(f, encoding="utf-8-sig", errors="replace"))
             header = next(reader)
-            ci = {
-                "name":    _col(header, _NAME_COLS),
-                "country": _col(header, _COUNTRY_COLS),
-                "lat":     _col(header, _LAT_COLS),
-                "lon":     _col(header, _LON_COLS),
-                "size":    _col(header, _SIZE_COLS),
-                "vhf":     _col(header, _VHF_COLS),
-                "phone":   _col(header, _PHONE_COLS),
-                "sign":    _col(header, _CALLSIGN_COLS),
-                "index":   _col(header, _INDEX_COLS),
-            }
-            facility_cols = {tag: _col(header, (col,)) for col, tag in _FACILITY_MAP.items()}
+            ci = {k: _col(header, v) for k, v in {
+                "name":    _NAME_COLS,
+                "country": _COUNTRY_COLS,
+                "lat":     _LAT_COLS,
+                "lon":     _LON_COLS,
+                "size":    _SIZE_COLS,
+                "vhf":     _VHF_COLS,
+                "phone":   _PHONE_COLS,
+                "sign":    _CALLSIGN_COLS,
+                "index":   _INDEX_COLS,
+            }.items()}
+            fac_cols = {tag: _col(header, (col,)) for col, tag in _FACILITY_MAP.items()}
 
             for row in reader:
                 def g(key: str) -> str:
@@ -135,110 +140,179 @@ def fetch_wpi() -> list[dict]:
                 if not name:
                     continue
                 try:
-                    lat = float(g("lat"))
-                    lon = float(g("lon"))
+                    lat, lon = float(g("lat")), float(g("lon"))
                 except ValueError:
                     continue
 
-                facilities = [tag for col, tag in _FACILITY_MAP.items()
-                              if facility_cols.get(tag, -1) >= 0
-                              and row[facility_cols[tag]].strip().upper() in ("Y", "YES", "1")]
-
+                facilities = [
+                    tag for col, tag in _FACILITY_MAP.items()
+                    if fac_cols.get(tag, -1) >= 0
+                    and row[fac_cols[tag]].strip().upper() in ("Y", "YES", "1")
+                ]
                 rows.append({
-                    "name":      name,
-                    "country":   g("country")[:2].upper(),
-                    "lat":       lat,
-                    "lon":       lon,
-                    "type":      "PRT",
-                    "size":      g("size").strip().upper(),
-                    "vhf":       _clean_vhf(g("vhf")),
-                    "phone":     g("phone"),
-                    "call_sign": g("sign"),
-                    "wpi_index": g("index"),
+                    "name":       name,
+                    "country":    (g("country") + "  ")[:2].upper().strip(),
+                    "lat":        lat,
+                    "lon":        lon,
+                    "type":       "PRT",
+                    "size":       g("size").upper(),
+                    "vhf":        _clean_vhf(g("vhf")),
+                    "phone":      g("phone"),
+                    "call_sign":  g("sign"),
+                    "wpi_index":  g("index"),
                     "facilities": "|".join(facilities),
                 })
+    return rows
 
-    print(f"  {len(rows)} WPI ports loaded.")
+
+def fetch_wpi(override_file: str | None = None) -> list[dict]:
+    if override_file:
+        print(f"Loading WPI from local file: {override_file}")
+        data = Path(override_file).read_bytes()
+    else:
+        print("Downloading WPI from NGA (~3 MB)…")
+        data = _get(WPI_URL, headers=_BROWSER_HEADERS)
+        if data is None:
+            print(
+                "\n  WPI download failed.  Manual fallback:\n"
+                "  1. Open https://msi.nga.mil/Publications/WPI in a browser\n"
+                "  2. Download the WPI ZIP\n"
+                "  3. Run:  python scripts/fetch_ports.py --wpi-file /path/to/WPI.zip\n",
+                file=sys.stderr,
+            )
+            return []
+
+    rows = _parse_wpi_zip(data)
+    vhf_count = sum(1 for r in rows if r["vhf"])
+    print(f"  {len(rows)} WPI ports loaded ({vhf_count} with VHF data).")
     return rows
 
 
 # ── GeoNames supplement ───────────────────────────────────────────────────────
 
-GEONAMES_CODES  = ["HBR", "MRNA", "LDNG", "ANCH"]  # PRT already covered by WPI
-CODE_PRIORITY   = {"HBR": 0, "MRNA": 1, "LDNG": 2, "ANCH": 3}
+# Use the HTTPS endpoint — http://api.geonames.org returns 401 for some clients.
+GEONAMES_API   = "https://secure.geonames.org/searchJSON"
+GEONAMES_CODES = ["HBR", "MRNA", "LDNG", "ANCH"]  # PRT covered by WPI
+
+
+def _geonames_error(status: dict, user: str) -> None:
+    code, msg = status.get("value"), status.get("message", "")
+    if code == 10:
+        print(
+            f"\n  GeoNames authentication failed for user '{user}'.\n"
+            "  Most likely cause: free web services not yet enabled.\n"
+            "  → Go to https://www.geonames.org/manageaccount\n"
+            "    tick 'Free Web Services' and click Save\n",
+            file=sys.stderr,
+        )
+    elif code == 18:
+        print(
+            f"\n  GeoNames daily limit exceeded (demo account).\n"
+            "  → Register at https://www.geonames.org/login for a personal account,\n"
+            "    enable free web services, and re-run with --user YOUR_USERNAME\n",
+            file=sys.stderr,
+        )
+    elif code == 19:
+        print(f"\n  GeoNames blocked this IP: {msg}\n", file=sys.stderr)
+    else:
+        print(f"\n  GeoNames error {code}: {msg}\n", file=sys.stderr)
 
 
 def fetch_geonames(user: str) -> list[dict]:
-    rows = []
+    rows: list[dict] = []
     seen: set[int] = set()
 
     for code in GEONAMES_CODES:
         print(f"  Fetching GeoNames {code}…")
         start = 0
-        while True:
+        stop = False
+        while not stop:
             url = (
-                "http://api.geonames.org/searchJSON"
+                f"{GEONAMES_API}"
                 f"?featureCode={code}&maxRows=1000&startRow={start}"
                 f"&username={user}&style=SHORT"
             )
-            try:
-                with urllib.request.urlopen(url, timeout=30) as resp:
-                    hits = json.loads(resp.read()).get("geonames", [])
-            except Exception as e:
-                print(f"    Warning: {e}", file=sys.stderr)
+            raw = _get(url, timeout=30)
+            if raw is None:
+                break  # error already printed by _get
+
+            data = json.loads(raw)
+
+            # GeoNames encodes errors in the JSON body even when HTTP 200.
+            if "status" in data:
+                _geonames_error(data["status"], user)
+                stop = True
                 break
+
+            hits = data.get("geonames", [])
             if not hits:
                 break
+
             for h in hits:
                 gid = h.get("geonameId")
                 if gid and gid not in seen:
                     seen.add(gid)
                     name = (h.get("asciiName") or h.get("name", "")).strip()
-                    if not name:
-                        continue
-                    rows.append({
-                        "name":       name,
-                        "country":    h.get("countryCode", "").strip(),
-                        "lat":        float(h.get("lat", 0)),
-                        "lon":        float(h.get("lng", 0)),
-                        "type":       code,
-                        "size":       "",
-                        "vhf":        "",
-                        "phone":      "",
-                        "call_sign":  "",
-                        "wpi_index":  "",
-                        "facilities": "",
-                    })
+                    if name:
+                        rows.append({
+                            "name":       name,
+                            "country":    h.get("countryCode", "").strip(),
+                            "lat":        float(h.get("lat", 0)),
+                            "lon":        float(h.get("lng", 0)),
+                            "type":       code,
+                            "size":       "",
+                            "vhf":        "",
+                            "phone":      "",
+                            "call_sign":  "",
+                            "wpi_index":  "",
+                            "facilities": "",
+                        })
+
             start += len(hits)
             if len(hits) < 1000:
                 break
             time.sleep(0.3)
 
-    print(f"  {len(rows)} GeoNames supplement entries loaded.")
+        if stop:
+            break
+
+    print(f"  {len(rows)} GeoNames entries loaded.")
     return rows
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Build assets/ports.tsv from NGA WPI and GeoNames."
+    )
     ap.add_argument("--user", default="demo",
                     help="GeoNames username (register free at geonames.org)")
+    ap.add_argument("--wpi-file", metavar="PATH",
+                    help="Path to a locally downloaded WPI.zip (skips NGA download)")
+    ap.add_argument("--no-wpi",      action="store_true", help="Skip WPI entirely")
+    ap.add_argument("--no-geonames", action="store_true", help="Skip GeoNames supplement")
     args = ap.parse_args()
 
-    if args.user == "demo":
-        print("Note: using the 'demo' GeoNames account (rate-limited).")
-        print("  Register at https://www.geonames.org/login for higher limits.")
+    if args.user == "demo" and not args.no_geonames:
+        print(
+            "Note: using the 'demo' GeoNames account.\n"
+            "  WPI data will still download fully.\n"
+            "  For complete marina/harbour coverage, register free at\n"
+            "  https://www.geonames.org/login and re-run with --user YOUR_USERNAME\n"
+        )
 
-    # WPI first (authoritative communication data)
-    wpi_rows = fetch_wpi()
+    all_rows: list[dict] = []
 
-    # GeoNames supplement for marina/harbour types not in WPI
-    gn_rows = fetch_geonames(args.user)
+    if not args.no_wpi:
+        all_rows += fetch_wpi(args.wpi_file)
 
-    all_rows = wpi_rows + gn_rows
+    if not args.no_geonames:
+        print("Fetching GeoNames supplement…")
+        all_rows += fetch_geonames(args.user)
+
     all_rows.sort(key=lambda r: (
-        0 if r["type"] == "PRT" else CODE_PRIORITY.get(r["type"], 9),
+        0 if r["type"] == "PRT" else {"HBR": 1, "MRNA": 2, "LDNG": 3, "ANCH": 4}.get(r["type"], 9),
         r["name"].lower()
     ))
 
@@ -246,7 +320,7 @@ def main():
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("name\tcountry\tlat\tlon\ttype\tsize\tvhf\tphone\tcall_sign\twpi_index\tfacilities\n")
         for r in all_rows:
-            cols = [
+            f.write("\t".join([
                 r["name"].replace("\t", " "),
                 r["country"],
                 str(r["lat"]),
@@ -258,14 +332,9 @@ def main():
                 r["call_sign"].replace("\t", " "),
                 r["wpi_index"],
                 r["facilities"],
-            ]
-            f.write("\t".join(cols) + "\n")
+            ]) + "\n")
 
     print(f"\nSaved {len(all_rows)} ports → {OUT}")
-    if wpi_rows:
-        vhf_count = sum(1 for r in wpi_rows if r["vhf"])
-        print(f"  WPI: {len(wpi_rows)} ports, {vhf_count} with VHF channel data")
-    print(f"  GeoNames: {len(gn_rows)} supplement entries")
 
 
 if __name__ == "__main__":

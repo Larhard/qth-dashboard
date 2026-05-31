@@ -1,69 +1,104 @@
-# QTH Helper
+# QTH Dashboard
 
-A minimal, high-readability GPS navigation tool for Android. Built for outdoor and maritime use — optimised for glanceability in bright sunlight, wet conditions, and one-handed operation.
+A high-readability GPS navigation tool for Android, built for outdoor, maritime, and ham radio use. Optimised for glanceability in direct sunlight, wet conditions, and one-handed operation.
 
-> ⚠️ **Vibe-coded project.** This app was built with AI assistance. The author makes no guarantees about the correctness of calculations, sensor readings, or any other functionality. **Do not rely on this app as your sole means of navigation or as a safety device.**
+> ⚠️ **Vibe-coded project.** Built interactively with an AI assistant. No formal verification, testing framework, or safety audit has been performed. The author provides this software as-is, without any warranty of fitness for any particular purpose — including navigation, safety, or emergency use. **Never rely on this app as your sole means of navigation.**
 
 ---
 
 ## Features
 
 ### Heading
-- Rotating arrow showing current direction of travel
-- Degree-based true north heading
-- Automatic source switching: **GPS course** when moving (≥ 5.4 km/h), **magnetic compass + declination** when stationary
-- Both sources shown simultaneously — primary arrow in full colour, secondary dimmed
-- Colour-coded by source: **green** = GPS, **white** = compass
-- Current speed in km/h
+- Dual rotating arrows: **primary** (full colour) shows the active heading source, **secondary** (dimmed) shows the other
+- Source auto-switches at ≥ 5.4 km/h: **GPS course** (green, true north) when moving, **magnetic compass + WMM declination** (white) when stationary
+- **TRK** — smoothed track bearing computed from a spatial point buffer; more stable than last-two-point bearing and adapts within ~80 m of a direction change
+- Speed display (long-press to cycle km/h / knots / mph)
 
 ### GPS Coordinates
-- Latitude / longitude in **DD° MM.MMM'** format
-- **IARU/Maidenhead locator** in 8-character extended format (e.g. `JO62mm80`)
-- Tap coordinates to copy to clipboard
-- Tap locator to copy to clipboard
+- Three selectable formats: **DD° MM.MMM'** (default), **DD.DDDDDD°**, **DD° MM' SS.SS"** — long-press to cycle
+- **IARU/Maidenhead** locator in 8-character extended format (`JO62mm80`), plus 6-char and 4-char variants
+- **MGRS** — long-press locator to switch type
+- Tap coordinates or locator to copy to clipboard
+- GPS-calibrated clock (UTC or local — long-press to switch), altitude, and accuracy
 
-### Nearest City
-- Name, bearing arrow, degree heading, and distance
-- Database of **5 000 largest cities by population** (loaded at build time, works fully offline)
+### Nearest city / port
+Four precision levels, cycled by tapping the city section:
 
-### Man Overboard (MOB)
-- Large red **MOB** button — tap to mark current position
-- Once set, shows: bearing arrow, degree heading, distance, and coordinates of the marked point
-- MOB position **survives app restarts**
-- **Hold the card for 3 seconds to clear** — a progress ring fills the card border as you hold; releasing early cancels without clearing
+| Mode | Dataset | Typical coverage |
+|------|---------|-----------------|
+| Large | Top 5 000 cities by population | Global overview |
+| Precise | All cities ≥ 5 000 pop. | Regional |
+| Detailed | All cities ≥ 1 000 pop. | Local |
+| Port | WPI + GeoNames harbours/marinas | Maritime |
 
-### General
-- True north correction via Android's built-in `GeomagneticField` (no internet required after first GPS fix)
-- Screen stays on for the lifetime of the app
-- Battery-conscious: compass throttled to ~12 Hz, GPS fires only on ≥ 2 m movement, city recalculation only every 100 m, compass stream paused when app is backgrounded
-- Portrait-only, full-screen immersive mode
+In **Port mode**, the VHF working channel and radio call sign are displayed when available; tap VHF to copy.
+
+### Waypoints / MOB
+- Tap **MOB** to drop a waypoint at the current position (serves as Man Overboard marker)
+- Active waypoint shows bearing arrow, degrees, distance, coordinates (all formats), locator, creation date/time, and elapsed time
+- Tap `+` in the Waypoints screen to add a waypoint by entering coordinates manually
+- Tap a waypoint in the list to activate it as a navigation target; tap again to deactivate
+- **Hold the active waypoint card for 3 seconds** to deactivate — progress ring fills the border; releasing early cancels
+- Waypoint list sorted newest-first; each entry shows elapsed time, coordinates, and distance from current position
+
+### Day / Night mode
+- **Day** — full-contrast palette, readable in direct sunlight
+- **Night** — red-only palette; no greens, blues, or ambers; preserves rhodopsin (night-vision accommodation) for marine use
+- **Hold the moon/sun icon** (top-right area) to switch — deliberate hold required to prevent accidental activation during night sailing
+
+### GPS on lock screen
+- By default, GPS is paused when the screen turns off (saves battery)
+- **Hold the source label** (`GPS @ 🔒`) for 1.5 s to toggle **ON LOCK** mode — GPS keeps tracking via a foreground service when the screen is off
+- ON LOCK requires the *"Allow all the time"* location permission; the system will prompt for it when first enabled
+- A persistent notification is shown while GPS is running in the background (Android requirement)
+
+### Debug screen
+Access by **holding the bug icon** (top-left corner). Three tabs:
+- **GPS** — fix quality, accuracy, satellite count by constellation (GPS/GLO/GAL/BDS), position, motion, clock skew, session stats
+- **Heading** — all bearing sources side-by-side, magnetic declination, TRK buffer visualisation
+- **Locators** — all coordinate formats (tap to copy), Maidenhead 4/6/8-char, MGRS, geo URI, OSM link, nearest entry from each city/port mode
 
 ---
 
 ## Project structure
 
 ```
-qth_helper/
+qth_dashboard/
 ├── lib/
 │   ├── main.dart
-│   ├── models/city.dart
-│   ├── screens/home_screen.dart
+│   ├── models/
+│   │   ├── city.dart          # City + port data model (shared)
+│   │   └── waypoint.dart
+│   ├── screens/
+│   │   ├── home_screen.dart   # Main navigation display
+│   │   ├── waypoints_screen.dart
+│   │   └── debug_screen.dart
 │   ├── services/
-│   │   ├── city_service.dart
-│   │   └── declination_service.dart
+│   │   ├── city_service.dart  # Spatial grid lookup for cities and ports
+│   │   ├── declination_service.dart
+│   │   └── waypoint_service.dart
 │   ├── utils/
-│   │   ├── coordinate_utils.dart   # DD° MM.MMM' formatter + Maidenhead
-│   │   └── geo_utils.dart          # Haversine distance + bearing
+│   │   ├── coordinate_utils.dart  # DDM / DD / DMS + Maidenhead
+│   │   ├── geo_utils.dart         # Haversine + bearing
+│   │   ├── mgrs_utils.dart
+│   │   ├── track_bearing.dart     # Smoothed track bearing estimator
+│   │   └── units.dart             # Speed / distance / format preferences
 │   └── widgets/
-│       ├── arrow_widget.dart
-│       └── hold_to_clear_button.dart
-├── android/app/src/main/kotlin/…/MainActivity.kt
+│       └── arrow_widget.dart
+├── android/
+│   └── app/src/main/
+│       ├── kotlin/…/MainActivity.kt  # Lock-screen flags + GNSS channel
+│       └── AndroidManifest.xml
 ├── assets/
-│   ├── cities.tsv          # generated by scripts/fetch_cities.py
-│   └── icon/               # generated by scripts/generate_icon.py
+│   ├── cities.tsv           # top-5 000 cities  — generated by fetch_cities.py
+│   ├── cities_precise.tsv   # all cities ≥ 5k pop
+│   ├── cities_detailed.tsv  # all cities ≥ 1k pop
+│   ├── ports.tsv            # WPI + GeoNames ports — generated by fetch_ports.py
+│   └── icon/                # generated by generate_icon.py
 └── scripts/
-    ├── fetch_cities.py     # downloads top-5000 cities from GeoNames
-    └── generate_icon.py    # generates app icon PNG via Pillow
+    ├── fetch_cities.py      # Downloads city datasets from GeoNames
+    ├── fetch_ports.py       # Downloads port data from NGA WPI + GeoNames
+    └── generate_icon.py     # Generates app icon PNGs via Pillow
 ```
 
 ---
@@ -74,34 +109,97 @@ qth_helper/
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| [Flutter SDK](https://docs.flutter.dev/get-started/install/windows) | 3.x stable | Add `flutter\bin` to PATH |
-| Python | 3.8+ | For one-time asset generation |
-| Android SDK | API 21+ | Installed automatically by Flutter / Android Studio |
+| [Flutter SDK](https://docs.flutter.dev/get-started/install) | 3.x stable | Add `flutter\bin` to PATH |
+| Android SDK | API 21+ | Installed by Android Studio or `flutter doctor` |
+| Python | 3.8+ | Required for the data-fetch scripts only |
+| [Pillow](https://pillow.readthedocs.io/) | any | `pip install Pillow` — icon generation only |
 
-### One-time setup
+---
 
-Run the setup script from the project root. It scaffolds the Flutter project, fetches city data (requires internet once), generates the app icon, and installs packages:
-
-```powershell
-.\setup.ps1
-```
-
-Or run the steps manually:
+### Step 1 — Install Flutter packages
 
 ```powershell
-# 1. Create Flutter Android boilerplate
-flutter create --project-name qth_helper --org com.example --platforms android .
-
-# 2. Install packages
 flutter pub get
-
-# 3. Download top-5000 cities (~2 MB, one-time internet access)
-python scripts\fetch_cities.py
-
-# 4. Generate app icon
-python scripts\generate_icon.py
-flutter pub run flutter_launcher_icons
 ```
+
+---
+
+### Step 2 — Download city data (required, ~10 MB)
+
+```powershell
+python scripts\fetch_cities.py
+```
+
+Downloads `cities1000.zip` from GeoNames and produces three TSV files under `assets/`:
+
+| File | Rows | Use |
+|------|------|-----|
+| `cities.tsv` | 5 000 | Global overview |
+| `cities_precise.tsv` | ~47 000 | Regional |
+| `cities_detailed.tsv` | ~140 000 | Local detail |
+
+Each TSV includes: `name`, `country`, `lat`, `lon`, `population`, `timezone`.
+
+---
+
+### Step 3 — Download port data (optional but recommended for maritime use)
+
+The port database is sourced from two places:
+
+**NGA World Port Index (WPI)** — downloaded automatically, no account needed.
+~4 000 commercial ports worldwide with harbour size, VHF working channel, and radio call sign.
+
+**GeoNames supplement** — covers marinas, small harbours, and anchorages not in the WPI.
+Requires a **free GeoNames account** for meaningful coverage.
+
+#### Option A: with a GeoNames account (recommended)
+
+1. Register for free at <https://www.geonames.org/login>
+2. Run:
+
+```powershell
+python scripts\fetch_ports.py --user YOUR_USERNAME
+```
+
+#### Option B: without an account (WPI-only, limited marina coverage)
+
+```powershell
+python scripts\fetch_ports.py
+```
+
+This uses the `demo` GeoNames account which is heavily rate-limited — the WPI portion (the most useful part for maritime navigation) still downloads fully, but the marina/harbour supplement will be incomplete.
+
+#### What the script produces
+
+`assets/ports.tsv` — 11 columns per entry:
+
+| Column | Content |
+|--------|---------|
+| `name` | Port / harbour name |
+| `country` | ISO 3166-1 alpha-2 code |
+| `lat`, `lon` | Decimal coordinates |
+| `type` | `PRT` / `HBR` / `MRNA` / `LDNG` / `ANCH` |
+| `size` | WPI harbour size: `L` / `M` / `S` / `VS` |
+| `vhf` | VHF working channel(s), e.g. `12;74` |
+| `phone` | Harbour-master / operations number |
+| `call_sign` | ITU radio call sign |
+| `wpi_index` | NGA WPI world port number |
+| `facilities` | Pipe-separated flags, e.g. `FUEL_OIL\|WATER\|PROVISIONS` |
+
+A placeholder `ports.tsv` (header only) is committed to the repo, so the app builds and runs without this step — the Port mode will simply show no results until the script is run.
+
+---
+
+### Step 4 — Generate app icon (optional)
+
+```powershell
+python scripts\generate_icon.py
+dart run flutter_launcher_icons
+```
+
+Pre-generated icons are already committed to the repo; only run this if you want to regenerate them.
+
+---
 
 ### Run on device
 
@@ -111,6 +209,15 @@ Connect an Android phone with USB debugging enabled:
 flutter run
 ```
 
+List connected devices first if needed:
+
+```powershell
+flutter devices
+flutter run -d DEVICE_ID
+```
+
+---
+
 ### Build release APK
 
 ```powershell
@@ -118,19 +225,26 @@ flutter build apk --release
 # Output: build\app\outputs\flutter-apk\app-release.apk
 ```
 
-Transfer the APK to your phone and install it, or use `flutter install` with the device connected.
+Transfer to the phone and install, or:
+
+```powershell
+flutter install
+```
 
 ---
 
 ## Permissions
 
-| Permission | Reason |
-|-----------|--------|
-| `ACCESS_FINE_LOCATION` | GPS coordinates and speed |
-| `ACCESS_COARSE_LOCATION` | Fallback location |
-| `WAKE_LOCK` | Keep screen on (set natively via `FLAG_KEEP_SCREEN_ON`) |
+| Permission | When required | Reason |
+|-----------|---------------|--------|
+| `ACCESS_FINE_LOCATION` | Always | GPS coordinates and speed |
+| `ACCESS_COARSE_LOCATION` | Always | Fallback location |
+| `WAKE_LOCK` | Always | Keep screen on |
+| `FOREGROUND_SERVICE` | GPS on lock screen | Android API 28+ requirement |
+| `FOREGROUND_SERVICE_LOCATION` | GPS on lock screen | Android API 34+ requirement |
+| `ACCESS_BACKGROUND_LOCATION` | GPS on lock screen | Background access, Android 10+; user grants at runtime via system prompt |
 
-No internet permission is declared. All features work offline after the one-time city data download at build time.
+All features except *GPS on lock screen* work with only the first three permissions. Internet is never used by the app itself.
 
 ---
 
@@ -138,16 +252,17 @@ No internet permission is declared. All features work offline after the one-time
 
 | Package | Purpose |
 |---------|---------|
-| `geolocator` | GPS position stream |
+| `geolocator` | GPS position stream + foreground service |
 | `flutter_compass` | Magnetic compass heading |
-| `get_storage` | MOB persistence (pure Dart, no native code) |
+| `get_storage` | Persistent settings and waypoints (pure Dart) |
 
 ---
 
-## Known limitations & disclaimer
+## Known limitations
 
-- **Magnetic declination** is calculated via Android's `GeomagneticField`, which uses the World Magnetic Model (WMM). Accuracy degrades between WMM update cycles (every 5 years) and at high latitudes.
-- **GPS course** is only used when speed exceeds 5.4 km/h; below that, the magnetic compass is used instead. The compass is affected by nearby metal and magnetic fields (e.g. a car dashboard mount).
-- **Nearest city** is the closest of the 5 000 most populous cities in the world. In remote areas the result may be hundreds of kilometres away.
-- **Maidenhead locator** is computed to 8 characters (extended square, ~1 km precision).
-- This app was **vibe coded** — built interactively with an AI assistant. No formal verification, testing framework, or safety audit has been performed. The author provides this code as-is, without any warranty of fitness for any particular purpose, including navigation or safety applications.
+- **Magnetic declination** uses Android's World Magnetic Model (WMM) via `GeomagneticField`. Accuracy degrades between update cycles (every 5 years) and at high latitudes.
+- **GPS course** is only used above 5.4 km/h. Below that, the magnetic compass is the primary source and is susceptible to nearby metal and magnetic fields (e.g. a car mount).
+- **TRK** requires ~80 m of movement to stabilise after a direction change. It is not available until at least two GPS fixes have been received.
+- **City and port databases** are static snapshots generated at build time. Port communication data (VHF channels, phone numbers) comes from the NGA World Port Index; accuracy depends on the WPI publication date.
+- **Port VHF data** — the WPI covers commercial ports well; smaller marinas may have incomplete or missing communication data.
+- This project was **vibe coded** — no formal testing, security audit, or regulatory review has been performed.
