@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:math' show cos, max, min, pi, sin, sqrt;
+import 'dart:math' show cos, log, max, min, pi, pow, sin, sqrt;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import '../services/city_service.dart';
+import '../services/environment_service.dart';
 import '../services/declination_service.dart';
 import '../utils/coordinate_utils.dart';
 import '../utils/geo_utils.dart';
@@ -61,6 +62,8 @@ class _DebugScreenState extends State<DebugScreen> {
   StreamSubscription<Position>? _posSub;
   StreamSubscription<CompassEvent>? _compassSub;
   StreamSubscription? _gnssSub;
+  StreamSubscription? _envSub;
+  Map<String, dynamic> _env = {};
   Timer? _ticker;
 
   @override
@@ -102,6 +105,11 @@ class _DebugScreenState extends State<DebugScreen> {
       setState(() => _compassHeading = corrected);
     });
 
+    _envSub = EnvironmentService.instance.stream.listen((data) {
+      if (!mounted) return;
+      setState(() => _env = data);
+    }, onError: (_) {});
+
     try {
       _gnssSub = _gnssChannel.receiveBroadcastStream().listen((data) {
         if (!mounted) return;
@@ -122,6 +130,7 @@ class _DebugScreenState extends State<DebugScreen> {
     _posSub?.cancel();
     _compassSub?.cancel();
     _gnssSub?.cancel();
+    _envSub?.cancel();
     _ticker?.cancel();
     super.dispose();
   }
@@ -131,7 +140,7 @@ class _DebugScreenState extends State<DebugScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         backgroundColor: Colors.black,
         appBar: AppBar(
@@ -153,11 +162,12 @@ class _DebugScreenState extends State<DebugScreen> {
               Tab(text: 'GPS'),
               Tab(text: 'HEADING'),
               Tab(text: 'LOCATORS'),
+              Tab(text: 'SENSORS'),
             ],
           ),
         ),
         body: TabBarView(
-          children: [_gpsTab(), _headingTab(), _locatorsTab()],
+          children: [_gpsTab(), _headingTab(), _locatorsTab(), _sensorsTab()],
         ),
       ),
     );
@@ -532,6 +542,183 @@ class _DebugScreenState extends State<DebugScreen> {
   static String _fmtDecl(double decl) {
     final dir = decl >= 0 ? 'E' : 'W';
     return '${decl.abs().toStringAsFixed(2)}° $dir';
+  }
+
+  // ── Sensors tab ───────────────────────────────────────────────────────────
+
+  Widget _sensorsTab() {
+    final e = _env;
+    final avail = ((e['available']) as List?)?.cast<String>().toSet() ?? <String>{};
+
+    // Helper: double from map or null
+    double? dv(String k) {
+      final v = e[k];
+      return v == null ? null : (v as num).toDouble();
+    }
+
+    // Format a nullable double; show '—' if null, 'N/A' if sensor absent
+    String fmt(double? v, {int dec = 1}) =>
+        v == null ? '—' : v.toStringAsFixed(dec);
+    String sensor(String key, double? v, {int dec = 1}) =>
+        avail.contains(key) ? fmt(v, dec: dec) : 'N/A';
+
+    // ── Temperature ─────────────────────────────────────────────────────────
+    final tC = dv('temperature');
+    final tF = tC != null ? tC * 9 / 5 + 32 : null;
+    final tK = tC != null ? tC + 273.15 : null;
+
+    // ── Pressure & barometric altitude ───────────────────────────────────────
+    final hpa = dv('pressure');
+    final pa    = hpa != null ? hpa * 100 : null;
+    final inHg  = hpa != null ? hpa * 0.02953 : null;
+    final mmHg  = hpa != null ? hpa * 0.75006 : null;
+    final atm   = hpa != null ? hpa * 0.000987 : null;
+    final altM  = hpa != null
+        ? 44330.0 * (1.0 - pow(hpa / 1013.25, 0.19029))
+        : null;
+    final altFt = altM != null ? altM * 3.28084 : null;
+
+    // ── Light ────────────────────────────────────────────────────────────────
+    final lux = dv('light');
+    final fc  = lux != null ? lux * 0.09290304 : null;
+    final ev  = (lux != null && lux > 0) ? log(lux / 2.5) / log(2) : null;
+
+    // ── Magnetic field ───────────────────────────────────────────────────────
+    final mx = dv('mag_x');
+    final my = dv('mag_y');
+    final mz = dv('mag_z');
+    final mb = (mx != null && my != null && mz != null)
+        ? sqrt(mx * mx + my * my + mz * mz)
+        : null;
+
+    // ── Motion ───────────────────────────────────────────────────────────────
+    final steps = dv('steps')?.round();
+    final distM  = steps != null ? steps * 0.75 : null;
+    final distKm = distM != null ? distM / 1000 : null;
+    final distMi = distM != null ? distM / 1609.34 : null;
+
+    // ── Battery ──────────────────────────────────────────────────────────────
+    final battPct = dv('battery_pct');
+    final battC   = dv('battery_temp');
+    final battF   = battC != null ? battC * 9 / 5 + 32 : null;
+    final battK   = battC != null ? battC + 273.15 : null;
+
+    // Battery level colour
+    Color battColor(double? pct) {
+      if (pct == null) return _cText;
+      if (pct > 50) return _cGood;
+      if (pct > 20) return _cWarn;
+      return _cBad;
+    }
+
+    return SingleChildScrollView(
+      padding: _pad,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── Environmental ──────────────────────────────────────────────────
+        _section('Environmental'),
+        _divider(),
+        _row('Temperature  °C', sensor('temperature', tC)),
+        _row('Temperature  °F', sensor('temperature', tF)),
+        _row('Temperature  K',  sensor('temperature', tK, dec: 2)),
+        _row('Pressure  hPa',   sensor('pressure', hpa)),
+        if (avail.contains('pressure')) ...[
+          _row('Pressure  Pa',    fmt(pa,   dec: 0)),
+          _row('Pressure  inHg',  fmt(inHg, dec: 3)),
+          _row('Pressure  mmHg',  fmt(mmHg, dec: 1)),
+          _row('Pressure  atm',   fmt(atm,  dec: 5)),
+          _row('Baro altitude  m',  fmt(altM,  dec: 0)),
+          _row('Baro altitude  ft', fmt(altFt, dec: 0)),
+        ],
+        _row('Humidity  %', sensor('humidity', dv('humidity'))),
+        _row('Light  lux', sensor('light', lux, dec: 0)),
+        if (avail.contains('light')) ...[
+          _row('Light  fc',  fmt(fc, dec: 1)),
+          _row('Light  EV',  fmt(ev, dec: 1)),
+        ],
+
+        // ── Magnetic field ──────────────────────────────────────────────────
+        _section('Magnetic field'),
+        _divider(),
+        _row('X (north)  µT', avail.contains('magnetic') ? fmt(mx) : 'N/A'),
+        _row('Y (east)   µT', avail.contains('magnetic') ? fmt(my) : 'N/A'),
+        _row('Z (down)   µT', avail.contains('magnetic') ? fmt(mz) : 'N/A'),
+        if (avail.contains('magnetic')) ...[
+          _row('|B|  µT',     fmt(mb, dec: 1)),
+          _row('|B|  nT',     fmt(mb != null ? mb * 1000 : null, dec: 0)),
+          _row('|B|  mGauss', fmt(mb != null ? mb * 10   : null, dec: 0)),
+        ],
+
+        // ── Gravity / tilt ─────────────────────────────────────────────────
+        _section('Gravity / tilt'),
+        _divider(),
+        () {
+          final gx = dv('grav_x');
+          final gy = dv('grav_y');
+          final gz = dv('grav_z');
+          final gMag = (gx != null && gy != null && gz != null)
+              ? sqrt(gx * gx + gy * gy + gz * gz) : null;
+          // 0° = phone flat (face up/down); 90° = phone vertical.
+          final tilt = (gz != null && gMag != null && gMag > 0.01)
+              ? acos((gz.abs() / gMag).clamp(0.0, 1.0)) * 180 / pi : null;
+          // Pitch: negative = top forward, positive = top backward.
+          final pitch = (gy != null && gz != null)
+              ? atan2(-gy, gz) * 180 / pi : null;
+          // Roll: positive = right, negative = left.
+          final roll = (gx != null && gz != null)
+              ? atan2(gx, gz) * 180 / pi : null;
+          final na = avail.contains('gravity') ? null : 'N/A';
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _row('Tilt from horiz  °', na ?? fmt(tilt)),
+            _row('Pitch  °',           na ?? fmt(pitch)),
+            _row('Roll   °',           na ?? fmt(roll)),
+            _row('X  m/s²',            na ?? fmt(gx)),
+            _row('Y  m/s²',            na ?? fmt(gy)),
+            _row('Z  m/s²',            na ?? fmt(gz)),
+            _row('|g|  m/s²',          na ?? fmt(gMag, dec: 3)),
+          ]);
+        }(),
+
+        // ── Linear acceleration ─────────────────────────────────────────────
+        _section('Linear acceleration (gravity removed)'),
+        _divider(),
+        () {
+          final ax = dv('lin_x');
+          final ay = dv('lin_y');
+          final az = dv('lin_z');
+          final aMag = (ax != null && ay != null && az != null)
+              ? sqrt(ax * ax + ay * ay + az * az) : null;
+          final na = avail.contains('linear_accel') ? null : 'N/A';
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _row('X  m/s²',   na ?? fmt(ax)),
+            _row('Y  m/s²',   na ?? fmt(ay)),
+            _row('Z  m/s²',   na ?? fmt(az)),
+            _row('|a|  m/s²', na ?? fmt(aMag, dec: 3)),
+          ]);
+        }(),
+
+        // ── Motion ─────────────────────────────────────────────────────────
+        _section('Motion'),
+        _divider(),
+        _row('Steps since open',   avail.contains('steps')
+            ? (steps?.toString() ?? '—') : 'N/A'),
+        if (avail.contains('steps') && steps != null) ...[
+          _row('Est. distance  m',  fmt(distM,  dec: 0)),
+          _row('Est. distance  km', fmt(distKm, dec: 2)),
+          _row('Est. distance  mi', fmt(distMi, dec: 2)),
+        ],
+
+        // ── Battery ─────────────────────────────────────────────────────────
+        _section('Battery'),
+        _divider(),
+        _row('Level  %',
+            battPct != null ? '${battPct.toStringAsFixed(0)} %' : '—',
+            vc: battColor(battPct)),
+        _row('Temperature  °C', fmt(battC)),
+        _row('Temperature  °F', fmt(battF)),
+        _row('Temperature  K',  fmt(battK, dec: 2)),
+      ]),
+    );
   }
 }
 

@@ -2,9 +2,16 @@ package com.elgassia.qthdashboard
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.GeomagneticField
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.GnssStatus
 import android.location.LocationManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -57,21 +64,24 @@ class MainActivity : FlutterActivity() {
         // the main dashboard.
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/gnss")
             .setStreamHandler(GnssStreamHandler(this))
+
+        // ── Environmental / motion sensors (debug screen only) ───────────────
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/environment")
+            .setStreamHandler(SensorStreamHandler(this))
     }
 }
 
-// Streams GNSS constellation data to Flutter while the debug screen is open.
-// Automatically unregisters the callback when Flutter cancels the subscription.
+// ── GNSS stream ───────────────────────────────────────────────────────────────
+
 private class GnssStreamHandler(private val activity: FlutterActivity) :
     EventChannel.StreamHandler {
 
-    private var gnssCallback: Any? = null // GnssStatus.Callback, held as Any for API-level safety
+    private var gnssCallback: Any? = null
 
     @SuppressLint("MissingPermission")
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         if (events == null) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            // Devices below API 24 cannot report GNSS status; send a single empty packet.
             events.success(mapOf("total" to 0, "used" to 0, "constellations" to emptyMap<String, Int>()))
             return
         }
@@ -114,5 +124,148 @@ private class GnssStreamHandler(private val activity: FlutterActivity) :
             }
         }
         gnssCallback = null
+    }
+}
+
+// ── Environmental / motion sensor stream ──────────────────────────────────────
+//
+// Emits a Map<String, Any?> at 2 Hz while the stream is active.
+// Automatically registers / unregisters SensorManager listeners so it costs
+// nothing when the debug screen is closed.
+
+private class SensorStreamHandler(private val activity: FlutterActivity) :
+    EventChannel.StreamHandler, SensorEventListener {
+
+    private val sm = activity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private var sink: EventChannel.EventSink? = null
+    private val handler = Handler(Looper.getMainLooper())
+
+    // Latest cached values (updated by onSensorChanged)
+    private val latest = mutableMapOf<String, Double>()
+    private var magX:  Double? = null; private var magY:  Double? = null; private var magZ:  Double? = null
+    private var gravX: Double? = null; private var gravY: Double? = null; private var gravZ: Double? = null
+    private var linX:  Double? = null; private var linY:  Double? = null; private var linZ:  Double? = null
+    private var initialSteps: Double? = null
+
+    // Which sensor keys are actually present on this device
+    private val available = mutableSetOf<String>()
+
+    // Sensor type → map key
+    private val scalarSensors = mapOf(
+        Sensor.TYPE_AMBIENT_TEMPERATURE to "temperature",  // °C  — rare
+        Sensor.TYPE_PRESSURE            to "pressure",     // hPa — barometer
+        Sensor.TYPE_LIGHT               to "light",        // lux
+        Sensor.TYPE_RELATIVE_HUMIDITY   to "humidity",     // %RH — rare
+        Sensor.TYPE_STEP_COUNTER        to "steps",        // cumulative, delta computed here
+    )
+
+    // 2 Hz emission loop
+    private val emitRunnable = object : Runnable {
+        override fun run() {
+            emit()
+            handler.postDelayed(this, 500L)
+        }
+    }
+
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        sink = events
+        available.clear()
+        latest.clear()
+        magX = null;  magY = null;  magZ = null
+        gravX = null; gravY = null; gravZ = null
+        linX = null;  linY = null;  linZ = null
+        initialSteps = null
+
+        // Register all scalar sensors that exist on this device
+        for ((type, key) in scalarSensors) {
+            sm.getDefaultSensor(type)?.also {
+                sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+                available.add(key)
+            }
+        }
+
+        // 3-axis sensors
+        sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.also {
+            sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            available.add("magnetic")
+        }
+        sm.getDefaultSensor(Sensor.TYPE_GRAVITY)?.also {
+            sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            available.add("gravity")
+        }
+        sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)?.also {
+            sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            available.add("linear_accel")
+        }
+
+        handler.post(emitRunnable)
+    }
+
+    override fun onCancel(arguments: Any?) {
+        handler.removeCallbacks(emitRunnable)
+        sm.unregisterListener(this)
+        sink = null
+    }
+
+    override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor.type) {
+            Sensor.TYPE_STEP_COUNTER -> {
+                val raw = event.values[0].toDouble()
+                if (initialSteps == null) initialSteps = raw
+                latest["steps"] = raw - (initialSteps ?: raw)
+            }
+            Sensor.TYPE_MAGNETIC_FIELD -> {
+                magX = event.values[0].toDouble()
+                magY = event.values[1].toDouble()
+                magZ = event.values[2].toDouble()
+            }
+            Sensor.TYPE_GRAVITY -> {
+                gravX = event.values[0].toDouble()
+                gravY = event.values[1].toDouble()
+                gravZ = event.values[2].toDouble()
+            }
+            Sensor.TYPE_LINEAR_ACCELERATION -> {
+                linX = event.values[0].toDouble()
+                linY = event.values[1].toDouble()
+                linZ = event.values[2].toDouble()
+            }
+            else -> {
+                val key = scalarSensors[event.sensor.type] ?: return
+                latest[key] = event.values[0].toDouble()
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+
+    private fun emit() {
+        val s = sink ?: return
+
+        // Battery: level via BatteryManager, temperature via sticky broadcast
+        val battIntent = try {
+            activity.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        } catch (_: Exception) { null }
+        val battLevel  = battIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val battScale  = battIntent?.getIntExtra(BatteryManager.EXTRA_SCALE,  -1) ?: -1
+        val battPct    = if (battLevel >= 0 && battScale > 0) battLevel * 100.0 / battScale else null
+        val battTempRaw = battIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
+        val battTempC  = if (battTempRaw != Int.MIN_VALUE) battTempRaw / 10.0 else null
+
+        val data = HashMap<String, Any?>()
+        data["available"]    = available.toList()
+        data.putAll(latest)
+        data["mag_x"]        = magX
+        data["mag_y"]        = magY
+        data["mag_z"]        = magZ
+        data["grav_x"]       = gravX
+        data["grav_y"]       = gravY
+        data["grav_z"]       = gravZ
+        data["lin_x"]        = linX
+        data["lin_y"]        = linY
+        data["lin_z"]        = linZ
+        data["battery_pct"]  = battPct
+        data["battery_temp"] = battTempC
+
+        s.success(data)
     }
 }
