@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import '../utils/track_bearing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
@@ -1581,7 +1582,12 @@ class _CityDetailSheet extends StatelessWidget {
 
   Color get _cLabel  => dayMode ? const Color(0xFF888888) : const Color(0xFF882222);
   Color get _cValue  => dayMode ? Colors.white             : const Color(0xFFCC3333);
+  // Accent: cyan in day (maritime), medium red in night (night-safe)
   Color get _cAccent => dayMode ? const Color(0xFF00E5FF)  : const Color(0xFF882222);
+  // Warning: amber in day, bright red in night
+  Color get _cWarn   => dayMode ? const Color(0xFFFFD740)  : const Color(0xFFCC3333);
+  // Link: blue in day, medium red in night
+  Color get _cLink   => dayMode ? const Color(0xFF29B6F6)  : const Color(0xFF882222);
 
   Widget _section(String title) => Padding(
     padding: const EdgeInsets.fromLTRB(0, 16, 0, 4),
@@ -1614,6 +1620,61 @@ class _CityDetailSheet extends StatelessWidget {
     );
   }
 
+  // Tap opens the URL in a browser; long-press copies it to the clipboard.
+  Widget _linkRow(BuildContext ctx, String label, String url) {
+    if (url.isEmpty) return const SizedBox.shrink();
+    final uri = Uri.tryParse(url);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: uri != null
+          ? () => launchUrl(uri, mode: LaunchMode.externalApplication)
+          : null,
+      onLongPress: () {
+        Clipboard.setData(ClipboardData(text: url));
+        HapticFeedback.lightImpact();
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+          content: Text('URL copied',
+              style: TextStyle(color: _cValue, fontSize: 13)),
+          backgroundColor: const Color(0xFF1C1C1C),
+          duration: const Duration(milliseconds: 1500),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        ));
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(fontSize: 12, color: _cLabel)),
+            const SizedBox(width: 16),
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(url,
+                        textAlign: TextAlign.right,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: _cLink,
+                            decoration: TextDecoration.underline,
+                            decorationColor: _cLink)),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.open_in_new, size: 12, color: _cLink),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _fmtPop(int pop) {
     if (pop <= 0) return '';
     if (pop >= 1000000) return '${(pop / 1000000).toStringAsFixed(1)}M';
@@ -1629,8 +1690,31 @@ class _CityDetailSheet extends StatelessWidget {
     _   => s,
   };
 
+  // Shelter quality colour — graded in day (green→red), graded in night (all reds).
+  // In night mode brighter red = better shelter so the relative quality reads
+  // the same without using non-red colours.
+  Color _shelterColor(String s) {
+    if (dayMode) {
+      return switch (s) {
+        'E' => const Color(0xFF55DD55),
+        'G' => const Color(0xFF9CCC65),
+        'F' => const Color(0xFFFFD740),
+        'P' => const Color(0xFFFF7043),
+        _   => _cValue,
+      };
+    } else {
+      return switch (s) {
+        'E' => const Color(0xFFCC3333),
+        'G' => const Color(0xFF882222),
+        'F' => const Color(0xFF661111),
+        'P' => const Color(0xFF551111),
+        _   => _cValue,
+      };
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext ctx) {
     final city = nc.city;
     return DraggableScrollableSheet(
       expand: false,
@@ -1693,13 +1777,7 @@ class _CityDetailSheet extends StatelessWidget {
                   _row('Harbour type', city.harborType),
                   _row('Primary use', city.harborUse),
                   _row('Shelter', _shelter(city.shelter),
-                      vc: switch (city.shelter) {
-                        'E' => const Color(0xFF55DD55),
-                        'G' => const Color(0xFF9CCC65),
-                        'F' => const Color(0xFFFFD740),
-                        'P' => const Color(0xFFFF7043),
-                        _   => null,
-                      }),
+                      vc: _shelterColor(city.shelter)),
                   _row('NAVAREA', city.navarea),
 
                   if (city.channelDepthM > 0 || city.tidalRangeM > 0 ||
@@ -1723,8 +1801,7 @@ class _CityDetailSheet extends StatelessWidget {
                         city.firstPortEntry == 'N' ? 'No'  : ''),
                     _row('Pilotage', city.pilotage),
                     _row('Entry restrictions', city.entryRestrictions,
-                        vc: city.entryRestrictions.isNotEmpty
-                            ? const Color(0xFFFFD740) : null),
+                        vc: city.entryRestrictions.isNotEmpty ? _cWarn : null),
                   ],
 
                   if (city.vhf.isNotEmpty || city.phone.isNotEmpty ||
@@ -1741,8 +1818,7 @@ class _CityDetailSheet extends StatelessWidget {
                       city.publicationLink.isNotEmpty) ...[
                     _section('Publications'),
                     _row('Sailing directions', city.publication),
-                    _row('Link', city.publicationLink,
-                        vc: dayMode ? const Color(0xFF29B6F6) : _cAccent),
+                    _linkRow(ctx, 'Link', city.publicationLink),
                   ],
 
                   if (city.facilities.isNotEmpty) ...[
