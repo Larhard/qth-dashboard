@@ -68,6 +68,13 @@ class _HomeScreenState extends State<HomeScreen>
   DateTime _lastGpsFix = DateTime.now();
   int _gpsStaleSeconds = 0; // 0 = fresh; > 0 = seconds since last fix
 
+  // True while the screen is on (resumed lifecycle). Used to skip wasted
+  // display work and city lookups when the GPS fires in LIVE mode background.
+  bool _screenOn = true;
+  // Last compass heading that actually triggered a setState — used to suppress
+  // rebuilds when the heading hasn't changed enough to matter visually.
+  double _lastRenderedCompassHeading = -1.0;
+
   // ── Speed unit ────────────────────────────────────────────────────────────
   SpeedUnit _speedUnit = loadSpeedUnit();
 
@@ -215,6 +222,7 @@ class _HomeScreenState extends State<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _screenOn = false;
       // Screen off → release every continuously-running power draw:
       //  • compass sensor (paused)
       //  • GNSS receiver (stream cancelled — the big saving on long hikes)
@@ -234,6 +242,7 @@ class _HomeScreenState extends State<HomeScreen>
         _posSub = null;
       }
     } else if (state == AppLifecycleState.resumed) {
+      _screenOn = true;
       _compassSub?.resume();
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
       // Always restart the normal (no notification) stream on resume, whether
@@ -300,7 +309,16 @@ class _HomeScreenState extends State<HomeScreen>
       _compassHeading = corrected;
       _compassNotifier.value = corrected;
       if (!_compassReceived) _compassReceived = true;
-      if (!_usingGps && mounted) setState(() {});
+      // Only rebuild when the heading has changed enough to be visible.
+      // Suppresses ~10 Hz redraws when stationary (compass jitter ±0.5°).
+      if (!_usingGps && mounted) {
+        final delta = (corrected - _lastRenderedCompassHeading).abs();
+        final wrapped = delta > 180 ? 360 - delta : delta; // handle 359°→1° wrap
+        if (wrapped >= 0.5) {
+          _lastRenderedCompassHeading = corrected;
+          setState(() {});
+        }
+      }
     });
   }
 
@@ -324,10 +342,11 @@ class _HomeScreenState extends State<HomeScreen>
     _updateTrackBearing(pos);
     DeclinationService.instance.update(pos.latitude, pos.longitude, pos.altitude);
 
-    if (!mounted) {
-      // Screen is off (background foreground-service stream): skip all UI
-      // work — string formatting and city lookups are wasted CPU when nothing
-      // is visible. Cache the raw position; it will be displayed on resume.
+    if (!_screenOn || !mounted) {
+      // Screen is off (LIVE mode background stream): skip all display work.
+      // String formatting, city lookups, and setState are wasted CPU when
+      // nothing is visible. Cache the raw position for display on resume.
+      // NOTE: !mounted also guards against rare widget-disposal races.
       _position = pos;
       return;
     }
