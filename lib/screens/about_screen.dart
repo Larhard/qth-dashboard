@@ -7,38 +7,56 @@ import 'package:flutter/material.dart';
 ///   • OpenStreetMap contributors     — ODbL 1.0  (attribution required)
 ///   • NGA World Port Index           — public domain (attribution by custom)
 ///
+/// Respects the app-wide day / night mode: night mode uses deep-red shades
+/// consistent with the rest of the UI to avoid eye strain in the dark.
+///
 /// The "Open Source Licences" button opens Flutter's built-in licence page,
 /// which renders all package licences registered via LicenseRegistry (see
 /// main.dart for the data-source entries we add there).
 class AboutScreen extends StatelessWidget {
-  const AboutScreen({super.key});
+  final bool dayMode;
 
+  const AboutScreen({super.key, required this.dayMode});
+
+  // ── Colour palette (mirrors waypoints_screen and home_screen) ────────────
+  Color get _cPrimary   => dayMode ? Colors.white                : const Color(0xFFCC3333);
+  Color get _cSecondary => dayMode ? const Color(0xFFCCCCCC)     : const Color(0xFF882222);
+  Color get _cTertiary  => dayMode ? const Color(0xFF888888)     : const Color(0xFF551111);
+  Color get _cDim       => dayMode ? const Color(0xFF666666)     : const Color(0xFF441111);
+  Color get _cIcon      => dayMode ? const Color(0xFF555555)     : const Color(0xFF441111);
+  Color get _cDivider   => dayMode ? const Color(0xFF1A1A1A)     : const Color(0xFF2A0000);
+  Color get _cBtnFg     => dayMode ? const Color(0xFFAAAAAA)     : const Color(0xFF882222);
+  Color get _cBtnBorder => dayMode ? const Color(0xFF333333)     : const Color(0xFF440000);
+
+  // Disclaimer box colours
+  Color get _cWarnBorder => dayMode ? const Color(0xFF2A2A00) : const Color(0xFF2A0000);
+  Color get _cWarnBg     => dayMode ? const Color(0xFF0A0A00) : const Color(0xFF0A0000);
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        foregroundColor: const Color(0xFFAAAAAA),
+        foregroundColor: _cSecondary,
         elevation: 0,
-        title: const Text('About & Legal',
+        title: Text('About & Legal',
             style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFAAAAAA))),
+                color: _cSecondary)),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
         children: [
           // ── App identity ──────────────────────────────────────────────────
-          const Text('QTH Dashboard',
+          Text('QTH Dashboard',
               style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white)),
+                  color: _cPrimary)),
           const SizedBox(height: 4),
-          const Text('v1.1.0',
-              style: TextStyle(fontSize: 13, color: Color(0xFF666666))),
+          Text('v1.1.0',
+              style: TextStyle(fontSize: 13, color: _cDim)),
           const SizedBox(height: 12),
           _disclaimer(),
 
@@ -91,14 +109,14 @@ class AboutScreen extends StatelessWidget {
           // ── Package licences ──────────────────────────────────────────────
           _sectionTitle('Open Source Software'),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'This app is built with Flutter and uses several open-source '
             'packages. Tap below to view their individual licences, as '
             'required by the BSD-3-Clause and MIT terms under which they '
             'are distributed.',
             style: TextStyle(
                 fontSize: 13,
-                color: Color(0xFF888888),
+                color: _cTertiary,
                 height: 1.5),
           ),
           const SizedBox(height: 12),
@@ -108,7 +126,7 @@ class AboutScreen extends StatelessWidget {
               applicationName: 'QTH Dashboard',
               applicationVersion: 'v1.1.0',
               applicationLegalese:
-                  '© 2025 Bartłomiej Puget\n\n'
+                  '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
                   'City data © GeoNames (CC BY 4.0)\n'
                   'Port data: NGA WPI (public domain) + '
                   '© GeoNames (CC BY 4.0) + '
@@ -117,8 +135,8 @@ class AboutScreen extends StatelessWidget {
             icon: const Icon(Icons.article_outlined, size: 18),
             label: const Text('Open Source Licences'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFAAAAAA),
-              side: const BorderSide(color: Color(0xFF333333)),
+              foregroundColor: _cBtnFg,
+              side: BorderSide(color: _cBtnBorder),
             ),
           ),
 
@@ -127,12 +145,12 @@ class AboutScreen extends StatelessWidget {
           // ── App licence ───────────────────────────────────────────────────
           _sectionTitle('App Source Code'),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'The application source code is licensed under the MIT Licence.\n'
-            'Copyright © 2025 Bartłomiej Puget.',
+            'Copyright © 2026 Bartłomiej Puget <larhard@gmail.com>.',
             style: TextStyle(
                 fontSize: 13,
-                color: Color(0xFF888888),
+                color: _cTertiary,
                 height: 1.5),
           ),
         ],
@@ -143,29 +161,29 @@ class AboutScreen extends StatelessWidget {
   Widget _disclaimer() => Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFF2A2A00)),
+          border: Border.all(color: _cWarnBorder),
           borderRadius: BorderRadius.circular(6),
-          color: const Color(0xFF0A0A00),
+          color: _cWarnBg,
         ),
-        child: const Text(
-          '⚠  Vibe-coded — built with AI assistance. No formal testing, '
+        child: Text(
+          'Vibe-coded — built with AI assistance. No formal testing, '
           'safety audit, or regulatory review has been performed. '
           'Never rely on this app as your sole means of navigation.',
           style: TextStyle(
-              fontSize: 12, color: Color(0xFF888844), height: 1.5),
+              fontSize: 12, color: _cTertiary, height: 1.5),
         ),
       );
 
   Widget _sectionTitle(String text) => Text(text,
-      style: const TextStyle(
+      style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w700,
-          color: Color(0xFF777777),
+          color: _cDim,
           letterSpacing: 1.5));
 
-  Widget _divider() => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 20),
-        child: Divider(color: Color(0xFF1A1A1A), height: 1),
+  Widget _divider() => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Divider(color: _cDivider, height: 1),
       );
 
   Widget _credit({
@@ -176,22 +194,22 @@ class AboutScreen extends StatelessWidget {
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: const Color(0xFF555555)),
+          Icon(icon, size: 18, color: _cIcon),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFFCCCCCC))),
+                        color: _cSecondary)),
                 const SizedBox(height: 4),
                 Text(body,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF777777),
+                        color: _cTertiary,
                         height: 1.55)),
               ],
             ),

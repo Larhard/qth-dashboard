@@ -82,7 +82,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             tooltip: 'About & Legal',
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const AboutScreen()),
+              MaterialPageRoute(builder: (_) => AboutScreen(dayMode: widget.dayMode)),
             ),
           ),
         ],
