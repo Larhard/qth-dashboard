@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' show cos, log, max, min, pi, pow, sin, sqrt;
+import 'dart:math' show acos, atan2, cos, log, max, min, pi, pow, sin, sqrt;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
