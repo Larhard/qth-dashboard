@@ -554,6 +554,30 @@ class _HomeScreenState extends State<HomeScreen>
     HapticFeedback.lightImpact();
   }
 
+  /// Returns the largest font size ≤ [maxSize] at which [text] fits inside
+  /// [maxWidth] in at most [maxLines] lines.
+  ///
+  /// Uses TextPainter for exact measurement, so no unnecessary shrinkage occurs:
+  /// names that already fit in 2 lines at [maxSize] are returned unchanged.
+  /// Never returns less than [minSize].
+  static double _fitFontSize(
+    String text,
+    double maxWidth, {
+    double maxSize = 32,
+    double minSize = 18,
+    int maxLines = 2,
+    FontWeight weight = FontWeight.w700,
+  }) {
+    if (maxWidth <= 0 || text.isEmpty) return maxSize;
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: TextStyle(fontSize: maxSize, fontWeight: weight)),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+    final lines = tp.computeLineMetrics().length;
+    if (lines <= maxLines) return maxSize;
+    return (maxSize * maxLines / lines).clamp(minSize, maxSize);
+  }
+
   static String _staleDuration(int s) {
     if (s < 60) return '${s}s';
     final m = s ~/ 60;
@@ -1281,13 +1305,14 @@ class _HomeScreenState extends State<HomeScreen>
         const SizedBox(width: 16),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // FittedBox scales the name down when it's too wide instead of
-          // cutting it off — short names stay at full 32 sp.
-          Text(nc.city.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 32, fontWeight: FontWeight.w700, color: color)),
+          LayoutBuilder(builder: (_, bc) {
+            final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 32, minSize: 18);
+            return Text(nc.city.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: fs, fontWeight: FontWeight.w700, color: color));
+          }),
           Row(children: [
             Text('${nc.bearingDeg.round()}°',
                 style: TextStyle(
@@ -1348,11 +1373,14 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Flexible(
-                child: Text(nc.city.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.w700, color: color)),
+                child: LayoutBuilder(builder: (_, bc) {
+                  final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 28, minSize: 16);
+                  return Text(nc.city.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: fs, fontWeight: FontWeight.w700, color: color));
+                }),
               ),
               const SizedBox(width: 8),
               Text(nc.city.country,
