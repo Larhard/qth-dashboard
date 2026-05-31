@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' show cos, sqrt;
+import '../utils/track_bearing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
@@ -29,8 +29,6 @@ class _HomeScreenState extends State<HomeScreen>
   static const _gpsThresholdMs = 1.5;    // m/s ≈ 5.4 km/h
   static const _compassIntervalMs = 100; // ~10 Hz — slightly lower than before
   static const _cityRecalcThresholdM = 100.0;
-  static const _trackBufferSize = 8;
-  static const _trackMinDistM = 20.0;    // min distance between track samples
 
   // ── GPS / compass streams ─────────────────────────────────────────────────
   StreamSubscription<Position>? _posSub;
@@ -59,11 +57,8 @@ class _HomeScreenState extends State<HomeScreen>
   final _compassNotifier = ValueNotifier<double>(0.0);
 
   // ── Track azimuth ─────────────────────────────────────────────────────────
-  // Smoothed direction of travel: bearing from oldest to newest in a ring
-  // buffer of evenly-spaced GPS positions. Much less noisy than last-2-point
-  // bearing, especially at low speed or with antenna jitter.
-  final _trackBuffer = <({double lat, double lon})>[];
-  double? _trackBearing;
+  // ── Track azimuth ─────────────────────────────────────────────────────────
+  final _track = TrackBearingEstimator();
 
   // ── GPS staleness ─────────────────────────────────────────────────────────
   Timer? _staleTimer;
@@ -155,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen>
       _staleTimer?.cancel();
       _staleTimer = null;
       _cancelClear();
+      _track.clear();
     } else if (state == AppLifecycleState.resumed) {
       _compassSub?.resume();
       // Restart everything that was torn down on pause.
@@ -286,27 +282,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Track azimuth ─────────────────────────────────────────────────────────
   void _updateTrackBearing(Position pos) {
-    // Distance filter below handles noise — no speed gate here.
-    // Slow hiking (< 3.6 km/h) still produces a meaningful course bearing.
-
-    if (_trackBuffer.isNotEmpty) {
-      final last = _trackBuffer.last;
-      // Fast flat-earth distance check
-      final dLat = (pos.latitude - last.lat) * 111320;
-      final dLon = (pos.longitude - last.lon) *
-          111320 *
-          cos(last.lat * 3.14159265 / 180);
-      if (sqrt(dLat * dLat + dLon * dLon) < _trackMinDistM) return;
-    }
-
-    if (_trackBuffer.length >= _trackBufferSize) _trackBuffer.removeAt(0);
-    _trackBuffer.add((lat: pos.latitude, lon: pos.longitude));
-
-    if (_trackBuffer.length >= 2) {
-      final first = _trackBuffer.first;
-      _trackBearing =
-          bearing(first.lat, first.lon, pos.latitude, pos.longitude);
-    }
+    _track.update(pos.latitude, pos.longitude);
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -663,7 +639,7 @@ class _HomeScreenState extends State<HomeScreen>
             valueListenable: _compassNotifier,
             builder: (_, compassBearing, __) {
               final secondaryBearing =
-                  _usingGps ? compassBearing : (_trackBearing ?? _lastValidGpsHeading);
+                  _usingGps ? compassBearing : (_track.bearing ?? _lastValidGpsHeading);
               if (secondaryBearing == null) return const SizedBox.shrink();
               return Opacity(
                 opacity: 0.38,
@@ -700,7 +676,7 @@ class _HomeScreenState extends State<HomeScreen>
             style: const TextStyle(
                 fontSize: 13, color: Color(0xFFBBBBBB), letterSpacing: 2.5)),
         Text(
-          _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
+          _track.bearing != null ? 'TRK ${_track.bearing!.round()}°' : 'TRK ---',
           style: const TextStyle(
               fontSize: 13,
               color: Color(0xFFB0B0B0),
@@ -729,7 +705,7 @@ class _HomeScreenState extends State<HomeScreen>
               valueListenable: _compassNotifier,
               builder: (_, compassBearing, __) {
                 final secondaryBearing =
-                    _usingGps ? compassBearing : (_trackBearing ?? _lastValidGpsHeading);
+                    _usingGps ? compassBearing : (_track.bearing ?? _lastValidGpsHeading);
                 if (secondaryBearing == null) return const SizedBox.shrink();
                 return Opacity(
                   opacity: 0.38,
@@ -774,7 +750,7 @@ class _HomeScreenState extends State<HomeScreen>
                 style: const TextStyle(
                     fontSize: 11, color: Color(0xFFBBBBBB), letterSpacing: 2.0)),
             Text(
-              _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
+              _track.bearing != null ? 'TRK ${_track.bearing!.round()}°' : 'TRK ---',
               style: const TextStyle(
                   fontSize: 11, color: Color(0xFFB0B0B0), letterSpacing: 1.5),
             ),
