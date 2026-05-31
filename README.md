@@ -109,16 +109,41 @@ qth_dashboard/
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| [Flutter SDK](https://docs.flutter.dev/get-started/install) | 3.x stable | Add `flutter\bin` to PATH |
+| [Flutter SDK](https://docs.flutter.dev/get-started/install) | 3.x stable | Windows: add `flutter\bin` to PATH; Linux: add `flutter/bin` to PATH |
 | Android SDK | API 21+ | Installed by Android Studio or `flutter doctor` |
-| Python | 3.8+ | Required for the data-fetch scripts only |
+| Python | 3.8+ | `python3` on Linux/macOS; `python` on Windows |
 | [Pillow](https://pillow.readthedocs.io/) | any | `pip install Pillow` — icon generation only |
+
+---
+
+### Quick setup (Steps 1–2 and icon generation in one command)
+
+**Windows (PowerShell):**
+```powershell
+.\setup.ps1
+```
+
+**Linux / macOS:**
+```bash
+chmod +x setup.sh   # first time only
+./setup.sh
+```
+
+Both scripts install packages, create the required asset stubs, and generate the
+app icon. Full data downloads (city datasets, port data) are left for the manual
+steps below.
 
 ---
 
 ### Step 1 — Install Flutter packages
 
+**Windows:**
 ```powershell
+flutter pub get
+```
+
+**Linux / macOS:**
+```bash
 flutter pub get
 ```
 
@@ -129,8 +154,14 @@ flutter pub get
 The three large data assets are gitignored and must be created locally before
 Flutter can compile. This step takes under a second and requires no internet:
 
+**Windows:**
 ```powershell
 python scripts\create_stubs.py
+```
+
+**Linux / macOS:**
+```bash
+python3 scripts/create_stubs.py
 ```
 
 This creates header-only placeholder files. The app will start with only the
@@ -140,8 +171,14 @@ built-in top-5 000 city dataset until the fetch scripts below are run.
 
 ### Step 3 — Download city data (optional but recommended, ~10 MB)
 
+**Windows:**
 ```powershell
 python scripts\fetch_cities.py
+```
+
+**Linux / macOS:**
+```bash
+python3 scripts/fetch_cities.py
 ```
 
 Downloads `cities1000.zip` from GeoNames and produces three TSV files under `assets/`:
@@ -176,6 +213,7 @@ Requires a **free GeoNames account** with free web services enabled:
 
 #### Run the script
 
+**Windows:**
 ```powershell
 # With both WPI file and GeoNames account (recommended):
 python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user YOUR_USERNAME
@@ -188,6 +226,18 @@ python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --no-geo
 
 # GeoNames only for specific countries (skip WPI and OSM):
 python scripts\fetch_ports.py --no-wpi --no-osm --countries PL --user YOUR_USERNAME
+```
+
+**Linux / macOS:**
+```bash
+# With both WPI file and GeoNames account (recommended):
+python3 scripts/fetch_ports.py --wpi-file "/path/to/UpdatedPub150.csv" --user YOUR_USERNAME
+
+# Restrict to specific countries:
+python3 scripts/fetch_ports.py --wpi-file "/path/to/UpdatedPub150.csv" --user YOUR_USERNAME --countries PL,DE,FI,SE,NL
+
+# WPI only (no GeoNames account):
+python3 scripts/fetch_ports.py --wpi-file "/path/to/UpdatedPub150.csv" --no-geonames --no-osm
 ```
 
 If the script is interrupted (network error, daily quota), re-run with the same arguments — GeoNames progress is cached in `scripts/.geonames_cache.json` and already-fetched feature codes will not be re-queried.
@@ -209,18 +259,25 @@ If the script is interrupted (network error, daily quota), re-run with the same 
 | `wpi_index` | NGA WPI world port number |
 | `facilities` | Pipe-separated flags, e.g. `FUEL_OIL\|WATER\|PROVISIONS` |
 
-A placeholder `ports.tsv` (header only) is committed to the repo, so the app builds and runs without this step — the Port mode will simply show no results until the script is run.
+The `ports.tsv` stub is gitignored and created by the setup script. Port mode shows no results until `fetch_ports.py` is run.
 
 ---
 
 ### Step 4 — Generate app icon (optional)
 
+Pre-generated icons are already committed to the repo; only run this if you want to regenerate them.
+
+**Windows:**
 ```powershell
 python scripts\generate_icon.py
 dart run flutter_launcher_icons
 ```
 
-Pre-generated icons are already committed to the repo; only run this if you want to regenerate them.
+**Linux / macOS:**
+```bash
+python3 scripts/generate_icon.py
+dart run flutter_launcher_icons
+```
 
 ---
 
@@ -228,13 +285,13 @@ Pre-generated icons are already committed to the repo; only run this if you want
 
 Connect an Android phone with USB debugging enabled:
 
-```powershell
+```bash
 flutter run
 ```
 
 List connected devices first if needed:
 
-```powershell
+```bash
 flutter devices
 flutter run -d DEVICE_ID
 ```
@@ -243,14 +300,14 @@ flutter run -d DEVICE_ID
 
 ### Build release APK
 
-```powershell
+```bash
 flutter build apk --release
-# Output: build\app\outputs\flutter-apk\app-release.apk
+# Output: build/app/outputs/flutter-apk/app-release.apk
 ```
 
 Transfer to the phone and install, or:
 
-```powershell
+```bash
 flutter install
 ```
 
