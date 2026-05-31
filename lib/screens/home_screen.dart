@@ -1289,6 +1289,8 @@ class _HomeScreenState extends State<HomeScreen>
         dayMode: _dayMode,
         position: _position,
         speedUnit: _speedUnit,
+        coordFormat: _coordFormat,
+        locatorType: _locatorType,
       ),
     );
   }
@@ -1596,12 +1598,16 @@ class _CityDetailSheet extends StatelessWidget {
   final bool dayMode;
   final Position? position;
   final SpeedUnit speedUnit;
+  final CoordFormat coordFormat;
+  final LocatorType locatorType;
 
   const _CityDetailSheet({
     required this.nc,
     required this.dayMode,
     required this.position,
     required this.speedUnit,
+    required this.coordFormat,
+    required this.locatorType,
   });
 
   bool get _isPort => nc.city.portType.isNotEmpty;
@@ -1615,6 +1621,128 @@ class _CityDetailSheet extends StatelessWidget {
   // Link: blue in day, medium red in night
   Color get _cLink   => dayMode ? const Color(0xFF29B6F6)  : const Color(0xFF882222);
 
+  // ── Copy-all ──────────────────────────────────────────────────────────────
+
+  /// Builds a plain-text representation of all displayed details so it can
+  /// be pasted into a messaging app and sent to another crew member.
+  String _buildCopyText() {
+    final city = nc.city;
+    final buf = StringBuffer();
+
+    void line(String label, String value) {
+      if (value.isEmpty || value == '0' || value == '0.0') return;
+      buf.writeln('$label: $value');
+    }
+
+    // ── Header ───────────────────────────────────────────────────────────
+    buf.writeln('${city.name} (${city.country})');
+    if (position != null) {
+      buf.writeln(
+          '${nc.bearingDeg.round()}°  ${formatDistanceUnit(nc.distKm, speedUnit)}');
+    }
+    buf.writeln();
+
+    // ── Reporter GPS position ─────────────────────────────────────────────
+    if (position != null) {
+      buf.writeln('GPS Position:');
+      buf.writeln('  ${formatLatF(position!.latitude, coordFormat)}');
+      buf.writeln('  ${formatLonF(position!.longitude, coordFormat)}');
+      final locStr = locatorType == LocatorType.maidenhead
+          ? '${maidenhead(position!.latitude, position!.longitude)} (IARU)'
+          : '${mgrs(position!.latitude, position!.longitude)} (MGRS)';
+      buf.writeln('  $locStr');
+      buf.writeln();
+    }
+
+    // ── City fields ───────────────────────────────────────────────────────
+    if (!_isPort) {
+      buf.writeln('LOCATION');
+      line('Country', city.country);
+      if (city.population > 0) line('Population', _fmtPop(city.population));
+      line('Timezone', city.timezone);
+    }
+
+    // ── Port fields ───────────────────────────────────────────────────────
+    if (_isPort) {
+      buf.writeln('PORT OVERVIEW');
+      line('Type', city.portType);
+      if (city.harbourSize.isNotEmpty) {
+        line('Harbour class', switch (city.harbourSize) {
+          'L'  => 'Large', 'M'  => 'Medium',
+          'S'  => 'Small', 'VS' => 'Very Small',
+          _    => city.harbourSize,
+        });
+      }
+      line('Harbour type', city.harborType);
+      line('Primary use', city.harborUse);
+      if (city.shelter.isNotEmpty) line('Shelter', _shelter(city.shelter));
+      line('NAVAREA', city.navarea);
+
+      if (city.channelDepthM > 0 || city.tidalRangeM > 0 || city.maxVesselLengthM > 0) {
+        buf.writeln();
+        buf.writeln('DIMENSIONS');
+        if (city.channelDepthM > 0)    line('Channel depth',    '${city.channelDepthM} m');
+        if (city.tidalRangeM > 0)      line('Tidal range',      '${city.tidalRangeM} m');
+        if (city.maxVesselLengthM > 0) line('Max vessel length','${city.maxVesselLengthM} m');
+        line('Chart', city.chart);
+      }
+
+      if (city.pilotage.isNotEmpty || city.firstPortEntry.isNotEmpty ||
+          city.entryRestrictions.isNotEmpty) {
+        buf.writeln();
+        buf.writeln('ENTRY REQUIREMENTS');
+        if (city.firstPortEntry == 'Y') line('First port of entry', 'Yes');
+        else if (city.firstPortEntry == 'N') line('First port of entry', 'No');
+        line('Pilotage', city.pilotage);
+        line('Entry restrictions', city.entryRestrictions);
+      }
+
+      if (city.vhf.isNotEmpty || city.phone.isNotEmpty || city.callSign.isNotEmpty) {
+        buf.writeln();
+        buf.writeln('COMMUNICATIONS');
+        if (city.vhf.isNotEmpty) {
+          line('VHF', 'Ch ${city.vhf.replaceAll(";", " / Ch ")}');
+        }
+        line('Call sign', city.callSign);
+        line('Phone', city.phone);
+      }
+
+      if (city.publication.isNotEmpty || city.publicationLink.isNotEmpty) {
+        buf.writeln();
+        buf.writeln('PUBLICATIONS');
+        line('Sailing directions', city.publication);
+        line('Link', city.publicationLink);
+      }
+
+      if (city.facilities.isNotEmpty) {
+        buf.writeln();
+        buf.writeln('FACILITIES');
+        buf.writeln(city.facilities
+            .split('|')
+            .where((f) => f.isNotEmpty)
+            .map((f) => f.replaceAll('_', ' '))
+            .join(', '));
+      }
+    }
+
+    return buf.toString().trim();
+  }
+
+  void _copyAll(BuildContext ctx) {
+    final text = _buildCopyText();
+    Clipboard.setData(ClipboardData(text: text));
+    HapticFeedback.lightImpact();
+    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+      content: Text('Details copied — paste into any app to share',
+          style: TextStyle(color: _cValue.withValues(alpha: 0.7), fontSize: 13)),
+      backgroundColor: const Color(0xFF1C1C1C),
+      duration: const Duration(milliseconds: 2000),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    ));
+  }
+
   Widget _section(String title) => Padding(
     padding: const EdgeInsets.fromLTRB(0, 16, 0, 4),
     child: Text(title.toUpperCase(),
@@ -1623,30 +1751,93 @@ class _CityDetailSheet extends StatelessWidget {
             letterSpacing: 2.5, fontWeight: FontWeight.w700)),
   );
 
-  Widget _row(String label, String value, {Color? vc}) {
+  // ── Shared snackbar ───────────────────────────────────────────────────────
+  void _showCopied(BuildContext ctx, String value) {
+    Clipboard.setData(ClipboardData(text: value));
+    HapticFeedback.lightImpact();
+    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+      content: Text(value,
+          style: TextStyle(color: _cValue.withValues(alpha: 0.7), fontSize: 13),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis),
+      backgroundColor: const Color(0xFF1C1C1C),
+      duration: const Duration(milliseconds: 1200),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    ));
+  }
+
+  // ── Generic row — long-press copies the value ──────────────────────────────
+  Widget _row(BuildContext ctx, String label, String value, {Color? vc}) {
     if (value.isEmpty || value == '0' || value == '0.0') return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(fontSize: 12, color: _cLabel)),
-          const SizedBox(width: 16),
-          Flexible(
-            child: Text(value,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: vc ?? _cValue,
-                    fontFeatures: const [FontFeature.tabularFigures()])),
-          ),
-        ],
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: () => _showCopied(ctx, value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(fontSize: 12, color: _cLabel)),
+            const SizedBox(width: 16),
+            Flexible(
+              child: Text(value,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: vc ?? _cValue,
+                      fontFeatures: const [FontFeature.tabularFigures()])),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // Tap opens the URL in a browser; long-press copies it to the clipboard.
+  // ── Phone row — tap dials, long-press copies ───────────────────────────────
+  Widget _phoneRow(BuildContext ctx, String phone) {
+    if (phone.isEmpty) return const SizedBox.shrink();
+    final uri = Uri.parse('tel:$phone');
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => launchUrl(uri, mode: LaunchMode.externalApplication),
+      onLongPress: () => _showCopied(ctx, phone),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Phone', style: TextStyle(fontSize: 12, color: _cLabel)),
+            const SizedBox(width: 16),
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.phone, size: 12, color: _cAccent),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(phone,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: _cAccent,
+                            decoration: TextDecoration.underline,
+                            decorationColor: _cAccent,
+                            fontFeatures: const [FontFeature.tabularFigures()])),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Link row — tap opens browser, long-press copies ────────────────────────
   Widget _linkRow(BuildContext ctx, String label, String url) {
     if (url.isEmpty) return const SizedBox.shrink();
     final uri = Uri.tryParse(url);
@@ -1655,18 +1846,7 @@ class _CityDetailSheet extends StatelessWidget {
       onTap: uri != null
           ? () => launchUrl(uri, mode: LaunchMode.externalApplication)
           : null,
-      onLongPress: () {
-        Clipboard.setData(ClipboardData(text: url));
-        HapticFeedback.lightImpact();
-        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-          content: Text('URL copied',
-              style: TextStyle(color: _cValue, fontSize: 13)),
-          backgroundColor: const Color(0xFF1C1C1C),
-          duration: const Duration(milliseconds: 1500),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        ));
-      },
+      onLongPress: () => _showCopied(ctx, url),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
@@ -1752,26 +1932,46 @@ class _CityDetailSheet extends StatelessWidget {
           borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
         ),
         child: Column(children: [
-          // Drag handle
+          // Drag handle row with copy-all button
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                color: const Color(0xFF333333),
-                borderRadius: BorderRadius.circular(2)),
-            ),
+            padding: const EdgeInsets.only(top: 8, bottom: 2, right: 4),
+            child: Row(children: [
+              const SizedBox(width: 48),
+              Expanded(
+                child: Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF333333),
+                        borderRadius: BorderRadius.circular(2))),
+                ),
+              ),
+              SizedBox(
+                width: 48,
+                child: IconButton(
+                  icon: Icon(Icons.content_copy, size: 20, color: _cLabel),
+                  tooltip: 'Copy all details',
+                  onPressed: () => _copyAll(ctx),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ),
+            ]),
           ),
           Expanded(
             child: ListView(
               controller: ctrl,
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
               children: [
-                // Header
-                Text(city.name,
-                    style: TextStyle(
-                        fontSize: 22, fontWeight: FontWeight.w700,
-                        color: _cValue)),
+                // Header — long-press copies the name
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onLongPress: () => _showCopied(ctx, city.name),
+                  child: Text(city.name,
+                      style: TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.w700,
+                          color: _cValue)),
+                ),
                 const SizedBox(height: 4),
                 if (position != null) ...[
                   Text(
@@ -1784,66 +1984,66 @@ class _CityDetailSheet extends StatelessWidget {
                 // ── City fields ───────────────────────────────────────────
                 if (!_isPort) ...[
                   _section('Location'),
-                  _row('Country', city.country),
-                  _row('Population', _fmtPop(city.population)),
-                  _row('Timezone', city.timezone),
+                  _row(ctx, 'Country', city.country),
+                  _row(ctx, 'Population', _fmtPop(city.population)),
+                  _row(ctx, 'Timezone', city.timezone),
                 ],
 
                 // ── Port fields ───────────────────────────────────────────
                 if (_isPort) ...[
                   _section('Port overview'),
-                  _row('Type', city.portType),
-                  _row('Harbour class', switch (city.harbourSize) {
+                  _row(ctx, 'Type', city.portType),
+                  _row(ctx, 'Harbour class', switch (city.harbourSize) {
                     'L'  => 'Large',
                     'M'  => 'Medium',
                     'S'  => 'Small',
                     'VS' => 'Very Small',
                     _    => city.harbourSize,
                   }),
-                  _row('Harbour type', city.harborType),
-                  _row('Primary use', city.harborUse),
-                  _row('Shelter', _shelter(city.shelter),
+                  _row(ctx, 'Harbour type', city.harborType),
+                  _row(ctx, 'Primary use', city.harborUse),
+                  _row(ctx, 'Shelter', _shelter(city.shelter),
                       vc: _shelterColor(city.shelter)),
-                  _row('NAVAREA', city.navarea),
+                  _row(ctx, 'NAVAREA', city.navarea),
 
                   if (city.channelDepthM > 0 || city.tidalRangeM > 0 ||
                       city.maxVesselLengthM > 0) ...[
                     _section('Dimensions'),
-                    _row('Channel depth',
+                    _row(ctx, 'Channel depth',
                         city.channelDepthM > 0 ? '${city.channelDepthM} m' : ''),
-                    _row('Tidal range',
+                    _row(ctx, 'Tidal range',
                         city.tidalRangeM > 0 ? '${city.tidalRangeM} m' : ''),
-                    _row('Max vessel length',
+                    _row(ctx, 'Max vessel length',
                         city.maxVesselLengthM > 0 ? '${city.maxVesselLengthM} m' : ''),
-                    _row('Chart', city.chart),
+                    _row(ctx, 'Chart', city.chart),
                   ],
 
                   if (city.pilotage.isNotEmpty ||
                       city.firstPortEntry.isNotEmpty ||
                       city.entryRestrictions.isNotEmpty) ...[
                     _section('Entry requirements'),
-                    _row('First port of entry',
+                    _row(ctx, 'First port of entry',
                         city.firstPortEntry == 'Y' ? 'Yes' :
                         city.firstPortEntry == 'N' ? 'No'  : ''),
-                    _row('Pilotage', city.pilotage),
-                    _row('Entry restrictions', city.entryRestrictions,
+                    _row(ctx, 'Pilotage', city.pilotage),
+                    _row(ctx, 'Entry restrictions', city.entryRestrictions,
                         vc: city.entryRestrictions.isNotEmpty ? _cWarn : null),
                   ],
 
                   if (city.vhf.isNotEmpty || city.phone.isNotEmpty ||
                       city.callSign.isNotEmpty) ...[
                     _section('Communications'),
-                    _row('VHF working channel', city.vhf.isNotEmpty
+                    _row(ctx, 'VHF working channel', city.vhf.isNotEmpty
                         ? 'Ch ${city.vhf.replaceAll(";", " / Ch ")}' : '',
                         vc: _cAccent),
-                    _row('Call sign', city.callSign, vc: _cAccent),
-                    _row('Phone', city.phone),
+                    _row(ctx, 'Call sign', city.callSign, vc: _cAccent),
+                    _phoneRow(ctx, city.phone),
                   ],
 
                   if (city.publication.isNotEmpty ||
                       city.publicationLink.isNotEmpty) ...[
                     _section('Publications'),
-                    _row('Sailing directions', city.publication),
+                    _row(ctx, 'Sailing directions', city.publication),
                     _linkRow(ctx, 'Link', city.publicationLink),
                   ],
 
