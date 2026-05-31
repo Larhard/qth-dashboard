@@ -806,55 +806,62 @@ class _HomeScreenState extends State<HomeScreen>
   // Shows the current heading source (GPS/MAG) and the GPS-during-lock mode
   // (SAVE / LIVE). Hold for 1.5 s to toggle the mode.
   Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
-    final modeLabel = _gpsOnLock ? 'LIVE' : 'SAVE';
     final modeColor = _gpsOnLock ? _liveModeColor : _saveModeColor;
-    // Progress bar fills toward the *target* mode color (opposite of current).
+    // Progress fills toward the target mode color (opposite of current).
     final progressColor = _gpsOnLock ? _saveModeColor : _liveModeColor;
+    // gps_fixed = tracking active (LIVE), gps_off = paused during lock (SAVE).
+    final modeIcon = _gpsOnLock ? Icons.gps_fixed : Icons.gps_off;
+    // Vertical bar height ≈ two text lines at the given font size.
+    final barHeight = sourceFontSize * 2.4;
 
     return Listener(
       onPointerDown: (_) => _startToggle(),
       onPointerUp: (_) => _cancelToggle(),
       onPointerCancel: (_) => _cancelToggle(),
-      child: Column(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Text(_usingGps ? 'GPS' : 'MAG',
-                style: TextStyle(
-                    fontSize: sourceFontSize,
-                    color: const Color(0xFFBBBBBB),
-                    letterSpacing: 2.5)),
-            const SizedBox(width: 7),
-            Text(modeLabel,
-                style: TextStyle(
-                    fontSize: sourceFontSize - 2,
-                    color: modeColor,
-                    letterSpacing: 1.5,
-                    fontWeight: FontWeight.w600)),
-          ]),
-          Text(
-            _track.bearing != null
-                ? 'TRK ${_track.bearing!.round()}°'
-                : 'TRK ---',
-            style: TextStyle(
-                fontSize: trkFontSize,
-                color: const Color(0xFFB0B0B0),
-                letterSpacing: 1.5),
-          ),
-          // Progress bar — only visible while holding
-          if (_toggleProgress > 0)
-            SizedBox(
-              width: 64,
-              height: 2,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: FractionallySizedBox(
-                  widthFactor: _toggleProgress,
-                  child: Container(color: progressColor),
-                ),
+          // Left vertical progress bar — always present (fixed 3 px wide) so the
+          // layout never shifts. Fills top→bottom in the target mode colour while
+          // holding; invisible at rest. Placed left-of-text so the thumb pressing
+          // the labels does not cover it.
+          SizedBox(
+            width: 3,
+            height: barHeight,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: FractionallySizedBox(
+                heightFactor: _toggleProgress,
+                child: Container(color: progressColor),
               ),
             ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(_usingGps ? 'GPS' : 'MAG',
+                    style: TextStyle(
+                        fontSize: sourceFontSize,
+                        color: const Color(0xFFBBBBBB),
+                        letterSpacing: 2.5)),
+                const SizedBox(width: 6),
+                Icon(modeIcon, size: sourceFontSize + 1, color: modeColor),
+              ]),
+              Text(
+                _track.bearing != null
+                    ? 'TRK ${_track.bearing!.round()}°'
+                    : 'TRK ---',
+                style: TextStyle(
+                    fontSize: trkFontSize,
+                    color: const Color(0xFFB0B0B0),
+                    letterSpacing: 1.5),
+              ),
+            ],
+          ),
         ],
       ),
     );
