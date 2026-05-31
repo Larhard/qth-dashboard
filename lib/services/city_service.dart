@@ -90,12 +90,31 @@ class CityService {
     for (var i = 1; i < lines.length; i++) {
       final line = lines[i].trim();
       if (line.isEmpty) continue;
-      final parts = line.split('\t');
-      if (parts.length < 4) continue;
-      final lat = double.tryParse(parts[2]);
-      final lon = double.tryParse(parts[3]);
+      final p = line.split('\t');
+      if (p.length < 4) continue;
+      final lat = double.tryParse(p[2]);
+      final lon = double.tryParse(p[3]);
       if (lat == null || lon == null) continue;
-      cities.add(City(name: parts[0], country: parts[1], lat: lat, lon: lon));
+
+      // Column layout by file:
+      //   4 columns  — legacy city format (name, country, lat, lon)
+      //   6 columns  — city extended  (+ population, timezone)
+      //   9 columns  — port format    (+ type, size, vhf, phone, call_sign)
+      String get(int idx) => (idx < p.length) ? p[idx].trim() : '';
+
+      cities.add(City(
+        name:        p[0].trim(),
+        country:     p[1].trim(),
+        lat:         lat,
+        lon:         lon,
+        population:  int.tryParse(get(4)) ?? 0,
+        timezone:    get(5),
+        portType:    get(6),
+        harbourSize: get(7),
+        vhf:         get(8),
+        phone:       get(9),
+        callSign:    get(10),
+      ));
     }
     return cities;
   }

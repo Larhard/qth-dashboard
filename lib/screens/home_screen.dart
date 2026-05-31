@@ -1264,6 +1264,26 @@ class _HomeScreenState extends State<HomeScreen>
                     color: subColor.withValues(alpha: 0.7),
                     fontFeatures: const [FontFeature.tabularFigures()])),
           ]),
+          if (nc.city.vhf.isNotEmpty)
+            GestureDetector(
+              onTap: () => _copyToClipboard('VHF ${nc.city.vhf}'),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.radio, size: 14, color: subColor),
+                const SizedBox(width: 4),
+                Text('VHF ${nc.city.vhf}',
+                    style: TextStyle(
+                        fontSize: 16,
+                        color: color,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 1.5)),
+              ]),
+            ),
+          if (nc.city.callSign.isNotEmpty)
+            Text(nc.city.callSign,
+                style: TextStyle(
+                    fontSize: 14,
+                    color: subColor.withValues(alpha: 0.8),
+                    letterSpacing: 2.0)),
         ]),
         ),   // Expanded
       ]),

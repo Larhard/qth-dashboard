@@ -8,7 +8,9 @@ produces three city databases, each a subset of the next:
   assets/cities_detailed.tsv -- all ~140 000 cities with population >= 1 000
                                  (includes small towns like Swiatniki Gorne)
 
-All files are tab-separated: name, country, lat, lon  (header row included).
+TSV columns (6): name, country, lat, lon, population, timezone
+  population  integer, 0 if unknown
+  timezone    IANA timezone name, e.g. "Europe/Warsaw"
 
 Run once before building the app:
     python scripts/fetch_cities.py
@@ -26,16 +28,38 @@ LARGE_PATH    = os.path.join(ASSETS_DIR, 'cities.tsv')
 PRECISE_PATH  = os.path.join(ASSETS_DIR, 'cities_precise.tsv')
 DETAILED_PATH = os.path.join(ASSETS_DIR, 'cities_detailed.tsv')
 
-LARGE_N          = 5_000
-PRECISE_MIN_POP  = 5_000
+LARGE_N         = 5_000
+PRECISE_MIN_POP = 5_000
+
+# GeoNames cities1000.txt column indices (0-based):
+#  0  geonameid
+#  1  name
+#  2  asciiname
+#  3  alternatenames
+#  4  latitude
+#  5  longitude
+#  6  feature class
+#  7  feature code
+#  8  country code
+#  9  cc2
+# 10  admin1 code
+# 11  admin2 code
+# 12  admin3 code
+# 13  admin4 code
+# 14  population
+# 15  elevation
+# 16  dem
+# 17  timezone     ← used
+# 18  modification date
 
 
 def _write_tsv(path: str, cities: list) -> None:
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
-        f.write('name\tcountry\tlat\tlon\n')
-        for name, country, lat, lon, _ in cities:
+        f.write('name\tcountry\tlat\tlon\tpopulation\ttimezone\n')
+        for name, country, lat, lon, population, timezone in cities:
             safe_name = name.replace('\t', ' ')
-            f.write(f'{safe_name}\t{country}\t{lat}\t{lon}\n')
+            tz = timezone.replace('\t', ' ')
+            f.write(f'{safe_name}\t{country}\t{lat}\t{lon}\t{population}\t{tz}\n')
 
 
 def main():
@@ -55,17 +79,18 @@ def main():
     cities = []
     for line in content.splitlines():
         parts = line.split('\t')
-        if len(parts) < 15:
+        if len(parts) < 18:
             continue
         try:
-            name = parts[1].strip()
-            lat = float(parts[4])
-            lon = float(parts[5])
-            country = parts[8].strip()
+            name       = parts[1].strip()
+            lat        = float(parts[4])
+            lon        = float(parts[5])
+            country    = parts[8].strip()
             population = int(parts[14]) if parts[14].strip() else 0
+            timezone   = parts[17].strip()
             if not name:
                 continue
-            cities.append((name, country, lat, lon, population))
+            cities.append((name, country, lat, lon, population, timezone))
         except (ValueError, IndexError):
             continue
 
@@ -76,16 +101,16 @@ def main():
 
     # Level 1 -- top 5 000 worldwide (global overview)
     _write_tsv(LARGE_PATH, cities[:LARGE_N])
-    print(f"Saved {LARGE_N} cities -> {LARGE_PATH}")
+    print(f"Saved {LARGE_N} cities → {LARGE_PATH}")
 
     # Level 2 -- all places with population >= 5 000 (regional)
     precise = [c for c in cities if c[4] >= PRECISE_MIN_POP]
     _write_tsv(PRECISE_PATH, precise)
-    print(f"Saved {len(precise)} cities -> {PRECISE_PATH}")
+    print(f"Saved {len(precise)} cities → {PRECISE_PATH}")
 
     # Level 3 -- full dataset: population >= 1 000 (local, includes small towns)
     _write_tsv(DETAILED_PATH, cities)
-    print(f"Saved {len(cities)} cities -> {DETAILED_PATH}")
+    print(f"Saved {len(cities)} cities → {DETAILED_PATH}")
 
 
 if __name__ == '__main__':
