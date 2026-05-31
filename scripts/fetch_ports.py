@@ -27,9 +27,9 @@ Optional third source — OpenStreetMap via Overpass API
   river systems.  OSM marina nodes often include the actual VHF working
   channel via the "communication:vhf" tag.
   No registration required.
-  Usage:  --osm-countries PL,DE,FI,SE,NL,HU   (comma-separated ISO codes)
+  Usage:  --countries PL,DE,FI,SE,NL,HU   (comma-separated ISO codes)
   "ALL" queries every country (slow, ~several hours):
-          --osm-countries ALL
+          --countries ALL
 """
 import argparse, csv, io, json, re, sys, time, urllib.error, urllib.parse, urllib.request, zipfile
 from pathlib import Path
@@ -352,16 +352,25 @@ _ALL_COUNTRIES = [
 
 # Cache file — stores per (feature_code, country) results so an interrupted
 # run can resume without re-querying already-fetched country/code pairs.
-_GN_CACHE = Path(__file__).parent / ".geonames_cache.json"
+# Persistent cache — accumulates all fetched data across runs.
+# Keys: "HBR:PL", "OSM:DE", etc.  Never auto-deleted; grows as you fetch more.
+# Delete with --clean-cache or by removing the file manually.
+_CACHE_FILE = Path(__file__).parent / ".ports_cache.json"
 
 
 def _cache_load() -> dict:
-    if _GN_CACHE.exists():
+    if _CACHE_FILE.exists():
         try:
-            cache = json.loads(_GN_CACHE.read_text(encoding="utf-8"))
-            done_count = sum(1 for v in cache.values() if v.get("done"))
-            if done_count:
-                print(f"  Cache: {done_count} country/code pairs already fetched.")
+            cache = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+            gn_done  = sum(1 for k, v in cache.items()
+                           if ":" in k and not k.startswith("OSM:") and v.get("done"))
+            osm_done = sum(1 for k, v in cache.items()
+                           if k.startswith("OSM:") and v.get("done"))
+            parts = []
+            if gn_done:  parts.append(f"{gn_done} GeoNames pairs")
+            if osm_done: parts.append(f"{osm_done} OSM countries")
+            if parts:
+                print(f"  Cache loaded: {', '.join(parts)} already fetched.")
             return cache
         except Exception:
             pass
@@ -369,12 +378,25 @@ def _cache_load() -> dict:
 
 
 def _cache_save(cache: dict) -> None:
-    _GN_CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    _CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _cache_clear() -> None:
-    if _GN_CACHE.exists():
-        _GN_CACHE.unlink()
+    if _CACHE_FILE.exists():
+        _CACHE_FILE.unlink()
+        print("  Cache cleared.")
+
+
+def collect_from_cache(cache: dict) -> list[dict]:
+    """Return all completed rows from every source stored in the cache."""
+    rows = []
+    for val in cache.values():
+        if val.get("done"):
+            for r in val.get("rows", []):
+                r_copy = dict(r)
+                r_copy.pop("_gid", None)  # strip internal dedup key
+                rows.append(r_copy)
+    return rows
 
 
 def _geonames_error(status: dict, context: str, user: str) -> bool:
@@ -468,66 +490,63 @@ def _fetch_country_code(feat_code: str, country: str,
     return rows, False
 
 
-def fetch_geonames(user: str) -> list[dict]:
-    cache    = _cache_load()
-    all_rows : list[dict] = []
-    seen     : set[int]   = set()
-    abort = False
+def fetch_geonames(user: str, cache: dict,
+                   countries: list[str] | None = None) -> None:
+    """Fetch GeoNames harbour/marina data, updating cache in-place.
+    Already-cached (country, code) pairs are skipped — safe to re-run.
+    countries: restrict to these ISO codes; defaults to all countries."""
+    target = countries if countries else _ALL_COUNTRIES
+    seen : set[int] = set()
 
-    total_pairs = len(GEONAMES_CODES) * len(_ALL_COUNTRIES)
-    done_pairs  = sum(1 for v in cache.values() if v.get("done"))
-    print(f"  {total_pairs} country/code pairs to fetch "
-          f"({done_pairs} already cached).")
+    # Pre-populate seen from existing cache to avoid cross-source duplicates.
+    for key, val in cache.items():
+        if val.get("done") and not key.startswith("OSM:"):
+            for r in val.get("rows", []):
+                seen.add(r.get("_gid", 0))
+
+    total_pairs = len(GEONAMES_CODES) * len(target)
+    done_pairs  = sum(1 for k, v in cache.items()
+                      if ":" in k and not k.startswith("OSM:") and v.get("done")
+                      and k.split(":", 1)[1] in target)
+    scope_note = f" ({len(target)} countries)" if countries else " (all countries)"
+    print(f"  {total_pairs} GeoNames country/code pairs{scope_note}: "
+          f"{done_pairs} cached, {total_pairs - done_pairs} to fetch.")
 
     pair_num = 0
+    abort = False
     for feat_code in GEONAMES_CODES:
         if abort:
             break
-        code_total = 0
+        newly_fetched = 0
 
-        for country in _ALL_COUNTRIES:
+        for country in target:
             if abort:
                 break
 
             pair_num += 1
             cache_key = f"{feat_code}:{country}"
 
-            # Reuse cached result for this pair.
             if cache.get(cache_key, {}).get("done"):
-                for r in cache[cache_key]["rows"]:
-                    seen.add(r.get("_gid", 0))
-                    all_rows.append(r)
-                    code_total += 1
-                continue
+                continue  # already in cache, skip
 
             rows, fatal = _fetch_country_code(feat_code, country, user, seen)
 
-            # Cache this pair immediately (partial results are better than none).
             cache[cache_key] = {"done": not fatal, "rows": rows}
-            if pair_num % 20 == 0:
-                # Flush to disk every 20 pairs to limit data loss on Ctrl-C.
-                _cache_save(cache)
+            newly_fetched += len(rows)
 
-            all_rows.extend(rows)
-            code_total += len(rows)
+            if pair_num % 20 == 0:
+                _cache_save(cache)  # flush periodically to limit Ctrl-C data loss
 
             if fatal:
                 abort = True
                 break
 
             if rows:
-                # Only delay when we actually got data (skip idle countries fast).
-                time.sleep(0.3)
+                time.sleep(0.3)  # only delay when data was returned
 
-        _cache_save(cache)  # always flush at end of each feature code
-        print(f"  {feat_code}: {code_total} entries total.")
-
-    # Strip internal _gid field before returning
-    for r in all_rows:
-        r.pop("_gid", None)
-
-    print(f"  {len(all_rows)} GeoNames entries total.")
-    return all_rows
+        _cache_save(cache)
+        if newly_fetched:
+            print(f"  {feat_code}: {newly_fetched} new entries fetched.")
 
 
 # ── OpenStreetMap supplement via Overpass API ─────────────────────────────────
@@ -591,17 +610,15 @@ def _osm_vhf(tags: dict) -> str:
     return _clean_vhf(raw)
 
 
-def fetch_osm(countries: list[str], cache: dict) -> list[dict]:
-    """Query Overpass for marinas/harbours in each listed country."""
-    all_rows: list[dict] = []
+def fetch_osm(countries: list[str], cache: dict) -> None:
+    """Query Overpass for marinas/harbours in each listed country.
+    Already-cached countries are skipped — safe to re-run."""
     seen: set[tuple] = set()
 
     for country in countries:
         cache_key = f"{_OSM_CACHE_PREFIX}:{country}"
         if cache.get(cache_key, {}).get("done"):
-            rows = cache[cache_key]["rows"]
-            print(f"  OSM {country}: {len(rows)} cached entries.")
-            all_rows.extend(rows)
+            print(f"  OSM {country}: already cached, skipping.")
             continue
 
         print(f"  OSM {country}: querying Overpass…")
@@ -661,10 +678,7 @@ def fetch_osm(countries: list[str], cache: dict) -> list[dict]:
 
         cache[cache_key] = {"done": True, "rows": rows}
         _cache_save(cache)
-        all_rows.extend(rows)
         time.sleep(1.0)  # be polite to the Overpass server
-
-    return all_rows
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -677,52 +691,85 @@ def main():
                     help="GeoNames username (register free at geonames.org)")
     ap.add_argument("--wpi-file", metavar="PATH",
                     help="Path to locally downloaded UpdatedPub150.csv or WPI.zip")
-    ap.add_argument("--no-wpi",      action="store_true", help="Skip WPI")
-    ap.add_argument("--no-geonames", action="store_true", help="Skip GeoNames")
+    ap.add_argument("--no-wpi",      action="store_true",
+                    help="Exclude WPI data from output (does not affect cache)")
+    ap.add_argument("--no-geonames", action="store_true",
+                    help="Skip GeoNames API calls (cached GeoNames data still included in TSV)")
+    ap.add_argument("--no-osm",      action="store_true",
+                    help="Skip OSM Overpass API calls (cached OSM data still included in TSV)")
     ap.add_argument(
-        "--osm-countries", metavar="CC[,CC...]", default="",
+        "--countries", metavar="CC[,CC...]", default="",
         help=(
-            "Comma-separated ISO country codes to supplement with OpenStreetMap "
-            "marina/harbour data via Overpass API.  Use 'ALL' for every country. "
-            "Examples: PL,DE,FI,SE,NL  or  PL  or  ALL.  "
-            "OSM often includes actual VHF channels for small ports."
+            "ISO country codes to fetch from both GeoNames and OSM (additive — adds to cache). "
+            "Already-cached entries are skipped. 'ALL' = every country (~5 h for ALL+ALL). "
+            "Examples: PL  or  PL,DE,FI,SE,NL  or  ALL. "
+            "Combine with --no-geonames or --no-osm to restrict to one source."
         ),
     )
+    ap.add_argument("--clean-cache", action="store_true",
+                    help=(
+                        "Delete all cached GeoNames and OSM data and start from scratch. "
+                        "Use this if cached data is corrupt or you want a full re-fetch."
+                    ))
+    ap.add_argument("--rebuild-tsv", action="store_true",
+                    help=(
+                        "Regenerate ports.tsv from the existing cache without making "
+                        "any new API calls.  Useful after --wpi-file changes."
+                    ))
     args = ap.parse_args()
 
-    if args.user == "demo" and not args.no_geonames:
-        print(
-            "Note: using the 'demo' GeoNames account.\n"
-            "  For complete marina/harbour coverage, register free at\n"
-            "  https://www.geonames.org/login and re-run with --user YOUR_USERNAME\n"
-        )
+    # ── Handle --clean-cache first ────────────────────────────────────────────
+    if args.clean_cache:
+        _cache_clear()
+        if args.rebuild_tsv or not any([args.wpi_file, not args.no_geonames,
+                                        not args.no_osm, args.countries]):
+            print("Cache cleared.  Re-run without --clean-cache to fetch data.")
+            return
 
-    osm_countries: list[str] = []
-    if args.osm_countries:
-        raw = args.osm_countries.upper().strip()
-        osm_countries = list(_ALL_COUNTRIES) if raw == "ALL" else [
+    # ── Load shared cache (persists between all runs) ─────────────────────────
+    cache = _cache_load()
+
+    # ── Resolve country list (shared by GeoNames and OSM) ─────────────────────
+    countries: list[str] = []
+    if args.countries:
+        raw = args.countries.upper().strip()
+        countries = list(_ALL_COUNTRIES) if raw == "ALL" else [
             c.strip() for c in raw.split(",") if c.strip()
         ]
 
-    shared_cache = _cache_load()
-    all_rows: list[dict] = []
+    if args.user == "demo" and not args.no_geonames and not args.rebuild_tsv:
+        print(
+            "Note: using the 'demo' GeoNames account.\n"
+            "  For complete coverage, register free at https://www.geonames.org/login\n"
+            "  and re-run with --user YOUR_USERNAME\n"
+        )
+
+    # ── Fetch new data (skipped with --rebuild-tsv) ───────────────────────────
+    if not args.rebuild_tsv:
+        if not args.no_geonames:
+            print("Fetching GeoNames supplement…")
+            fetch_geonames(args.user, cache,
+                           countries=countries if countries else None)
+
+        if not args.no_osm and countries:
+            print(f"Fetching OSM data for: {', '.join(countries)}")
+            fetch_osm(countries, cache)
+
+    # ── Collect rows from cache + fresh WPI parse ─────────────────────────────
+    # The TSV is always built from the FULL cache so that incremental runs
+    # (e.g. PL first, then DE, then ALL) accumulate correctly.
+    all_rows: list[dict] = collect_from_cache(cache)
 
     if not args.no_wpi:
-        all_rows += fetch_wpi(args.wpi_file)
-
-    if not args.no_geonames:
-        print("Fetching GeoNames supplement…")
-        all_rows += fetch_geonames(args.user)
-
-    if osm_countries:
-        print(f"Fetching OSM data for: {', '.join(osm_countries)}")
-        all_rows += fetch_osm(osm_countries, shared_cache)
+        wpi_rows = fetch_wpi(args.wpi_file)
+        all_rows = wpi_rows + all_rows
 
     all_rows.sort(key=lambda r: (
         0 if r["type"] == "PRT" else {"HBR": 1, "MRNA": 2, "LDNG": 3, "ANCH": 4}.get(r["type"], 9),
         r["name"].lower()
     ))
 
+    # ── Write TSV ─────────────────────────────────────────────────────────────
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("name\tcountry\tlat\tlon\ttype\tsize\tvhf\tphone\tcall_sign\twpi_index\tfacilities\n")
@@ -741,21 +788,26 @@ def main():
                 r["facilities"],
             ]) + "\n")
 
-    # Cache is only cleared after a successful write — so a crash or Ctrl-C
-    # before this point leaves the cache intact for the next run.
-    _cache_clear()
+    # Cache is intentionally NOT cleared here — it persists for future runs.
+    # Use --clean-cache to reset everything.
 
-    vhf_total = sum(1 for r in all_rows if r["vhf"])
     wpi_total = sum(1 for r in all_rows if r["wpi_index"])
+    gn_total  = sum(1 for r in all_rows
+                    if not r["wpi_index"] and not r.get("_osm"))
+    osm_total = len(all_rows) - wpi_total - gn_total
+    vhf_total = sum(1 for r in all_rows if r["vhf"])
     print(f"\nSaved {len(all_rows)} ports -> {OUT}")
-    print(f"  WPI:       {wpi_total:5d}")
-    print(f"  GeoNames:  {len(all_rows) - wpi_total - sum(1 for r in all_rows if not r['wpi_index'] and r['country'].upper() in {c.upper() for c in osm_countries}):5d}")
-    for cc in osm_countries:
-        n = sum(1 for r in all_rows if r["country"].upper() == cc.upper() and not r["wpi_index"])
-        v = sum(1 for r in all_rows if r["country"].upper() == cc.upper() and r["vhf"])
-        if n:
-            print(f"  OSM {cc}:   {n:5d}  ({v} with VHF)")
-    print(f"  VHF data:  {vhf_total:5d} ports")
+    print(f"  WPI:      {wpi_total:5d}")
+    cached_gn = sum(1 for k, v in cache.items()
+                    if ":" in k and not k.startswith("OSM:") and v.get("done"))
+    cached_osm = sum(1 for k, v in cache.items()
+                     if k.startswith("OSM:") and v.get("done"))
+    if cached_gn:
+        print(f"  GeoNames: {sum(len(v['rows']) for k,v in cache.items() if ':' in k and not k.startswith('OSM:') and v.get('done')):5d}  ({cached_gn} country/code pairs)")
+    if cached_osm:
+        print(f"  OSM:      {sum(len(v['rows']) for k,v in cache.items() if k.startswith('OSM:') and v.get('done')):5d}  ({cached_osm} countries)")
+    print(f"  VHF data: {vhf_total:5d} ports")
+    print(f"  Cache:    {_CACHE_FILE.name}  (use --clean-cache to reset)")
 
 
 if __name__ == "__main__":

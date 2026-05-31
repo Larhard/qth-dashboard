@@ -166,11 +166,14 @@ Requires a **free GeoNames account** with free web services enabled:
 # With both WPI file and GeoNames account (recommended):
 python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user YOUR_USERNAME
 
-# WPI only (no GeoNames account):
-python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --no-geonames
+# Restrict to specific countries (fetches both GeoNames and OSM for those countries):
+python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user YOUR_USERNAME --countries PL,DE,FI,SE,NL
 
-# GeoNames only (if WPI download is unavailable):
-python scripts\fetch_ports.py --no-wpi --user YOUR_USERNAME
+# WPI only (no GeoNames account):
+python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --no-geonames --no-osm
+
+# GeoNames only for specific countries (skip WPI and OSM):
+python scripts\fetch_ports.py --no-wpi --no-osm --countries PL --user YOUR_USERNAME
 ```
 
 If the script is interrupted (network error, daily quota), re-run with the same arguments — GeoNames progress is cached in `scripts/.geonames_cache.json` and already-fetched feature codes will not be re-queried.

@@ -59,5 +59,5 @@ migrate_working_dir/
 .swiftpm/
 **/ios/Flutter/.last_build_id
 
-# fetch_ports.py GeoNames cache (intermediate run state)
-scripts/.geonames_cache.json
+# fetch_ports.py persistent data cache (GeoNames + OSM, accumulates across runs)
+scripts/.ports_cache.json
