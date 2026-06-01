@@ -1,4 +1,19 @@
+import 'package:flutter/material.dart' show Color;
 import 'package:get_storage/get_storage.dart';
+
+// ── Night-mode colour system ───────────────────────────────────────────────
+// All entries share hue ≈ 0° (pure red family).  Vary only in lightness so
+// every dark-mode screen has a cohesive, easily-distinguished palette.
+// Use these constants in every screen instead of raw Color literals so that
+// a single edit here updates the whole app.
+const kN0    = Color(0xFFFF3333); // brightest  — emergency / destructive
+const kN1    = Color(0xFFCC1111); // primary    — main text, active icons
+const kN2    = Color(0xFF881111); // secondary  — labels, sub-icons
+const kN3    = Color(0xFF551111); // tertiary   — metadata, captions
+const kN4    = Color(0xFF331111); // very dim   — hints, disabled
+const kNBg   = Color(0xFF1A0000); // tile / card background
+const kNDiv  = Color(0xFF250505); // dividers, borders
+const kNSheet= Color(0xFF0A0000); // modal / bottom-sheet background
 
 enum SpeedUnit { metric, nautical, imperial }
 

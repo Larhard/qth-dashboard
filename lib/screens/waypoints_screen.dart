@@ -36,11 +36,11 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   Timer? _ticker;
 
   bool get _day => widget.dayMode;
-  Color get _cPrimary  => _day ? Colors.white               : const Color(0xFFCC3333);
-  Color get _cSecond   => _day ? const Color(0xFFCCCCCC)    : const Color(0xFF882222);
-  Color get _cTertiary => _day ? const Color(0xFF888888)    : const Color(0xFF551111);
-  Color get _cDim      => _day ? const Color(0xFF666666)    : const Color(0xFF663333);
-  Color get _cDistText => _day ? const Color(0xFFAAAAAA)    : const Color(0xFF661111);
+  Color get _cPrimary  => _day ? Colors.white               : kN1;
+  Color get _cSecond   => _day ? const Color(0xFFCCCCCC)    : kN2;
+  Color get _cTertiary => _day ? const Color(0xFF888888)    : kN3;
+  Color get _cDim      => _day ? const Color(0xFF666666)    : kN3;
+  Color get _cDistText => _day ? const Color(0xFFAAAAAA)    : kN3;
   Color _locColor(LocatorType t) => !_day
       ? const Color(0xFF882222)
       : t == LocatorType.maidenhead
@@ -225,9 +225,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: widget.dayMode
-          ? const Color(0xFF111111)
-          : const Color(0xFF0A0000),
+      backgroundColor: widget.dayMode ? const Color(0xFF111111) : kNSheet,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
       builder: (_) => _WptEditSheet(
@@ -352,15 +350,15 @@ class _WptEditSheetState extends State<_WptEditSheet> {
   // ── Night-safe colour helpers ─────────────────────────────────────────────
   bool get _day => widget.dayMode;
   Color get _cText    => _day ? Colors.white               : const Color(0xFFCC3333);
-  Color get _cLabel   => _day ? Colors.white38             : const Color(0xFF882222);
-  Color get _cHint    => _day ? Colors.white24             : const Color(0xFF551111);
-  Color get _cBorder  => _day ? const Color(0xFF333333)    : const Color(0xFF440000);
-  Color get _cFocus   => _day ? const Color(0xFF555555)    : const Color(0xFF882222);
-  Color get _cSymBg   => _day ? const Color(0xFF1A2A1A)    : const Color(0xFF1A0000);
+  Color get _cLabel   => _day ? Colors.white38 : kN2;
+  Color get _cHint    => _day ? Colors.white24 : kN3;
+  Color get _cBorder  => _day ? const Color(0xFF333333) : kNDiv;
+  Color get _cFocus   => _day ? const Color(0xFF555555)    : kN2;
+  Color get _cSymBg   => _day ? const Color(0xFF1A2A1A) : kNBg;
   Color get _cSymFg   => _day ? const Color(0xFF55DD55)    : const Color(0xFFCC3333);
-  Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A)    : const Color(0xFF3A0000);
-  Color get _cCancel  => _day ? Colors.white38             : const Color(0xFF882222);
-  Color get _cDlgBg   => _day ? const Color(0xFF1A1A1A)    : const Color(0xFF1A0000);
+  Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A) : kNBg;
+  Color get _cCancel  => _day ? Colors.white38 : kN2;
+  Color get _cDlgBg   => _day ? const Color(0xFF1A1A1A) : kNBg;
   Color get _cDlgBody => _day ? Colors.white54             : const Color(0xFF882222);
 
   void _confirmDelete() {

@@ -139,38 +139,35 @@ class _HomeScreenState extends State<HomeScreen>
   //   Ghost     0xFF441111  — barely-there (dividers, secondary arrow, borders)
 
   // Text hierarchy
-  Color get _cText1 => _dayMode ? Colors.white                : const Color(0xFFCC3333);
-  Color get _cText2 => _dayMode ? const Color(0xFFEEEEEE)     : const Color(0xFF882222);
-  Color get _cText3 => _dayMode ? const Color(0xFFCCCCCC)     : const Color(0xFF661111);
+  Color get _cText1 => _dayMode ? Colors.white                : kN1;
+  Color get _cText2 => _dayMode ? const Color(0xFFEEEEEE)     : kN2;
+  Color get _cText3 => _dayMode ? const Color(0xFFCCCCCC)     : kN3;
   // Element-specific
-  Color get _cSpeed   => _dayMode ? const Color(0xFFD8D8D8)   : const Color(0xFF882222);
-  Color get _cAltAcc  => _dayMode ? const Color(0xFFCCCCCC)   : const Color(0xFF882222); // bumped from 551111
-  Color get _cStale   => _dayMode ? const Color(0xFFFF7043)   : const Color(0xFFCC2222);
+  Color get _cSpeed   => _dayMode ? const Color(0xFFD8D8D8)   : kN2;
+  Color get _cAltAcc  => _dayMode ? const Color(0xFFCCCCCC)   : kN2;
+  Color get _cStale   => _dayMode ? const Color(0xFFFF7043)   : kN1;
   // IARU locator now green (matches GPS arrow + UTC clock) — freed cyan goes to port
-  Color get _cLocator => _dayMode ? const Color(0xFF55DD55)   : const Color(0xFF882222);
-  Color get _cLocatorLabel => _dayMode ? const Color(0xFF3DBF3D) : const Color(0xFF661111);
-  Color get _cMgrs    => _dayMode ? const Color(0xFFFFA726)   : const Color(0xFF882222);
-  Color get _cMgrsLabel => _dayMode ? const Color(0xFFE65100) : const Color(0xFF661111);
+  Color get _cLocator => _dayMode ? const Color(0xFF55DD55)   : kN2;
+  Color get _cLocatorLabel => _dayMode ? const Color(0xFF3DBF3D) : kN3;
+  Color get _cMgrs    => _dayMode ? const Color(0xFFFFA726)   : kN2;
+  Color get _cMgrsLabel => _dayMode ? const Color(0xFFE65100) : kN3;
   Color get _cTime    => _dayMode
       ? (_timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D))
-      : const Color(0xFF882222);
+      : kN2;
   Color get _cTimeLabel => _dayMode
       ? (_timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100))
-      : const Color(0xFF661111);
+      : kN3;
   // GPS-lock toggle indicator
-  Color get _cSaveLock => _dayMode ? const Color(0xFFFFAB40) : const Color(0xFF661111);
-  Color get _cLiveLock => _dayMode ? const Color(0xFF26C6DA) : const Color(0xFF992222);
-  // Secondary heading arrow — ghost level in night (no extra Opacity needed)
-  // _cSecondaryArrow removed — secondary heading colour now via _secondaryHeadingColor
+  Color get _cSaveLock => _dayMode ? const Color(0xFFFFAB40) : kN3;
+  Color get _cLiveLock => _dayMode ? const Color(0xFF26C6DA) : kN1;
   // Active waypoint / MOB card
-  Color get _cWptName   => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
-  Color get _cWptArrow  => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
-  Color get _cWptData   => _dayMode ? const Color(0xFFFF2020) : const Color(0xFF771111);
-  Color get _cWptCoords => _dayMode ? const Color(0xFFDD3333) : const Color(0xFF882222); // brighter in both
-  Color get _cWptHint   => _dayMode ? const Color(0xFF4A1A1A) : const Color(0xFF441111);
-  // MOB button (emergency button — always visible but dimmer at night)
-  Color get _cMobBg   => _dayMode ? const Color(0xFFB71C1C) : const Color(0xFF661111);
-  Color get _cMobText => _dayMode ? Colors.white              : const Color(0xFFCC3333);
+  Color get _cWptName   => _dayMode ? const Color(0xFFFF3333) : kN1;
+  Color get _cWptArrow  => _dayMode ? const Color(0xFFFF3333) : kN1;
+  Color get _cWptData   => _dayMode ? const Color(0xFFFF2020) : kN2;
+  Color get _cWptCoords => _dayMode ? const Color(0xFFDD3333) : kN2;
+  // MOB button
+  Color get _cMobBg   => _dayMode ? const Color(0xFFB71C1C) : kN3;
+  Color get _cMobText => _dayMode ? Colors.white              : kN1;
 
   void _toggleDayMode() {
     HapticFeedback.mediumImpact();
@@ -216,9 +213,9 @@ class _HomeScreenState extends State<HomeScreen>
   // GPS=green, TRK=lime-green (slightly different tone), MAG=white
   // Night: all shift to reds with distinct brightness.
   Color get _headingColor => switch (_primarySourceId) {
-    _srcGps => _dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222),
-    _srcTrk => _dayMode ? const Color(0xFF88CC33) : const Color(0xFF992222),
-    _       => _dayMode ? Colors.white             : const Color(0xFF882222),
+    _srcGps => _dayMode ? const Color(0xFF55DD55) : kN1,
+    _srcTrk => _dayMode ? const Color(0xFF88CC33) : kN2,  // slightly dimmer than GPS
+    _       => _dayMode ? Colors.white             : kN3,  // MAG dimmest primary
   };
 
   String get _sourceLabel => switch (_primarySourceId) {
@@ -227,31 +224,25 @@ class _HomeScreenState extends State<HomeScreen>
     _       => 'MAG',
   };
 
-  // Secondary bearing (the other source, shown as a dimmed indicator).
-  double? get _secondaryBearing => switch (_headingSourceMode) {
-    HeadingSourceMode.auto    => _compassHeading,                           // MAG always secondary in auto
-    HeadingSourceMode.magOnly => _track.bearing ?? _lastValidGpsHeading,    // TRK/GPS secondary in magOnly
-  };
-
   Color get _secondaryHeadingColor {
     if (_headingSourceMode == HeadingSourceMode.auto) {
-      return _dayMode ? Colors.white : const Color(0xFF882222); // MAG = white/dim-red
+      return _dayMode ? Colors.white : kN2; // MAG secondary
     }
     // magOnly: secondary is TRK or GPS
     if (_track.bearing != null) {
-      return _dayMode ? const Color(0xFF88CC33) : const Color(0xFF992222); // TRK
+      return _dayMode ? const Color(0xFF88CC33) : kN2; // TRK secondary
     }
-    return _dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222);   // GPS
+    return _dayMode ? const Color(0xFF55DD55) : kN2;   // GPS secondary
   }
 
   // City accent colours collapse to dim red in night mode.
-  Color get _cityColor => !_dayMode ? const Color(0xFF882222) : switch (CityService.instance.mode) {
+  Color get _cityColor => !_dayMode ? kN2 : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
     CityMode.precise  => const Color(0xFFFFD740),  // amber    — regional
     CityMode.detailed => const Color(0xFFC6FF00),  // lime     — local detail
     CityMode.port     => const Color(0xFF00E5FF),  // nautical cyan (freed from IARU)
   };
-  Color get _citySubColor => !_dayMode ? const Color(0xFF551111) : switch (CityService.instance.mode) {
+  Color get _citySubColor => !_dayMode ? kN3 : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFE65100),  // deep orange
     CityMode.precise  => const Color(0xFFFFAB40),  // light amber
     CityMode.detailed => const Color(0xFFAEEA00),  // darker lime
@@ -968,7 +959,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildPortrait(Position pos) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1084,8 +1075,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Color get _cDivider =>
-      _dayMode ? const Color(0xFF1A1A1A) : const Color(0xFF2A0000);
+  Color get _cDivider => _dayMode ? const Color(0xFF1A1A1A) : kNDiv;
 
   Widget _divider() => Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1116,7 +1106,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (navWp != null) {
       // Day: deep orange-red — clearly distinct from city oranges/amber/lime.
     // Night: medium red (consistent with palette).
-    final navColor = _dayMode ? const Color(0xFFFF6E40) : const Color(0xFF992222);
+    final navColor = _dayMode ? const Color(0xFFFF6E40) : kN1;
       result.add((
         bearingDeg: bearing(pos.latitude, pos.longitude, navWp.lat, navWp.lon),
         color: navColor,
@@ -1142,7 +1132,6 @@ class _HomeScreenState extends State<HomeScreen>
     final color = _headingColor;
     final primary = _heading;
     final markers = _bearingMarkers(pos);
-    final secBearing = _secondaryBearing;
     final windRose = _headingArrowMode == HeadingArrowMode.windRose;
     return Row(children: [
       GestureDetector(
@@ -1185,10 +1174,10 @@ class _HomeScreenState extends State<HomeScreen>
                       ? compassBearing
                       : (_track.bearing ?? _lastValidGpsHeading);
                   if (sb == null) return const SizedBox.shrink();
-                  return _dayMode
-                      ? Opacity(opacity: 0.38,
-                          child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
-                      : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
+                  // Always dim the secondary arrow regardless of mode so it's
+                  // clearly distinguishable from the primary in night mode.
+                  return Opacity(opacity: 0.38,
+                      child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80));
                 },
               ),
               ArrowWidget(bearingDeg: primary, color: color, size: 80),
@@ -1233,7 +1222,6 @@ class _HomeScreenState extends State<HomeScreen>
     final color = _headingColor;
     final primary = _heading;
     final markers = _bearingMarkers(pos);
-    final secBearing = _secondaryBearing;
     final windRose = _headingArrowMode == HeadingArrowMode.windRose;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -1695,7 +1683,7 @@ class _HomeScreenState extends State<HomeScreen>
             Row(children: [
               Flexible(
                 child: LayoutBuilder(builder: (_, bc) {
-                  final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 28, minSize: 16);
+                  final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 28, minSize: 11);
                   return Text(nc.city.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -1734,7 +1722,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _navWptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final navColor = _dayMode ? const Color(0xFFFF6E40) : const Color(0xFF992222);
+    final navColor = _dayMode ? const Color(0xFFFF6E40) : kN1;
     final navSub   = _dayMode ? const Color(0xFFFF8F00) : const Color(0xFF661111);
     final arrowSz  = portrait ? 50.0 : 44.0;
     final dataFz   = portrait ? 22.0 : 20.0;
@@ -1853,7 +1841,9 @@ class _HomeScreenState extends State<HomeScreen>
       onPointerUp: (_) => _cancelClear(),
       onPointerCancel: (_) => _cancelClear(),
       child: CustomPaint(
-        painter: _WptBorderPainter(_clearProgress, dayMode: _dayMode),
+        painter: _WptBorderPainter(
+            _holdTarget == _WptHoldTarget.emergency ? _clearProgress : 0.0,
+            dayMode: _dayMode),
         child: Padding(
           padding: padding,
           child: Column(
@@ -2563,17 +2553,31 @@ class _BearingRingPainter extends CustomPainter {
           Offset(cx + (_ringR - tLen) * _cos(angle), cy + (_ringR - tLen) * _sin(angle)),
           Paint()..color = ringBase.withValues(alpha: alpha)..strokeWidth = tW..strokeCap = StrokeCap.round,
         );
-        // "N" label only (anchor for orientation)
+        // North marker — filled circle + bold "N" for maximum visibility in sunlight.
+        // Day: bright green (GPS color, high contrast); Night: bright red.
         if (i == 0) {
-          final lx = cx + (_ringR - 14) * _cos(angle);
-          final ly = cy + (_ringR - 14) * _sin(angle);
+          const nColor = Color(0xFF55DD55); // same green as GPS heading in day mode
+          final nNightColor = const Color(0xFFFF3333);
+          final markerColor = dayMode ? nColor : nNightColor;
+          final lx = cx + (_ringR - 1) * _cos(angle);
+          final ly = cy + (_ringR - 1) * _sin(angle);
+          // Filled circle background
+          canvas.drawCircle(Offset(lx, ly), 7.5,
+              Paint()..color = markerColor..style = PaintingStyle.fill);
+          // Dark outline for day mode contrast
+          if (dayMode) {
+            canvas.drawCircle(Offset(lx, ly), 7.5,
+                Paint()..color = Colors.black.withValues(alpha: 0.30)
+                       ..style = PaintingStyle.stroke..strokeWidth = 1.0);
+          }
+          // "N" text in contrasting colour
           final nPainter = TextPainter(
             text: TextSpan(
               text: 'N',
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.w900,
-                color: ringBase.withValues(alpha: dayMode ? 0.85 : 0.92),
+                color: dayMode ? Colors.black : Colors.white,
               ),
             ),
             textDirection: TextDirection.ltr,
