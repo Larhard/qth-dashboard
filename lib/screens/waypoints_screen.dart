@@ -36,16 +36,14 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   Timer? _ticker;
 
   bool get _day => widget.dayMode;
-  Color get _cPrimary  => _day ? Colors.white               : kN1;
-  Color get _cSecond   => _day ? const Color(0xFFCCCCCC)    : kN2;
-  Color get _cTertiary => _day ? const Color(0xFF888888)    : kN3;
-  Color get _cDim      => _day ? const Color(0xFF666666)    : kN3;
-  Color get _cDistText => _day ? const Color(0xFFAAAAAA)    : kN3;
+  Color get _cPrimary  => _day ? kDFg0 : kN1;
+  Color get _cSecond   => _day ? kDFg2 : kN2;
+  Color get _cTertiary => _day ? kDFg3 : kN3;
+  Color get _cDim      => _day ? kDFg4 : kN3;
+  Color get _cDistText => _day ? kDFg3 : kN3;
   Color _locColor(LocatorType t) => !_day
-      ? const Color(0xFF882222)
-      : t == LocatorType.maidenhead
-          ? const Color(0xFF55DD55)
-          : const Color(0xFFFFA726);
+      ? kN2
+      : t == LocatorType.maidenhead ? kDGps : kDAmb;
 
   @override
   void initState() {
@@ -100,7 +98,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           : ListView.separated(
               itemCount: wpts.length,
               separatorBuilder: (_, __) => Divider(
-                  color: _day ? const Color(0xFF1A1A1A) : const Color(0xFF2A0000),
+                  color: _day ? kDDiv : kNDiv,
                   height: 1),
               itemBuilder: (ctx, i) => _tile(wpts[i]),
             ),
@@ -141,9 +139,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             ? Icons.warning_rounded
             : isActive ? Icons.navigation : Icons.location_on_outlined,
         color: isEmergency
-            ? const Color(0xFFFF3333)
+            ? kDEmg
             : isActive
-                ? (_day ? const Color(0xFFFF6E40) : const Color(0xFFFF3333))
+                ? (_day ? kDNav : kN0)
                 : _cDim,
         size: 22,
       ),
@@ -151,9 +149,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         wp.name,
         style: TextStyle(
           color: isEmergency
-              ? const Color(0xFFFF3333)
+              ? kDEmg
               : isActive
-                  ? (_day ? const Color(0xFFFF6E40) : const Color(0xFFFF3333))
+                  ? (_day ? kDNav : kN0)
                   : _cPrimary,
           fontWeight: (isEmergency || isActive) ? FontWeight.w700 : FontWeight.w400,
           fontSize: 16,
@@ -349,17 +347,17 @@ class _WptEditSheetState extends State<_WptEditSheet> {
 
   // ── Night-safe colour helpers ─────────────────────────────────────────────
   bool get _day => widget.dayMode;
-  Color get _cText    => _day ? Colors.white               : const Color(0xFFCC3333);
-  Color get _cLabel   => _day ? Colors.white38 : kN2;
-  Color get _cHint    => _day ? Colors.white24 : kN3;
-  Color get _cBorder  => _day ? const Color(0xFF333333) : kNDiv;
-  Color get _cFocus   => _day ? const Color(0xFF555555)    : kN2;
-  Color get _cSymBg   => _day ? const Color(0xFF1A2A1A) : kNBg;
-  Color get _cSymFg   => _day ? const Color(0xFF55DD55)    : const Color(0xFFCC3333);
-  Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A) : kNBg;
+  Color get _cText    => _day ? kDFg0   : kN1;
+  Color get _cLabel   => _day ? Colors.white38 : kN2;   // opacity-based label on dark surface
+  Color get _cHint    => _day ? Colors.white24 : kN3;   // opacity-based hint
+  Color get _cBorder  => _day ? kDBrd   : kNDiv;
+  Color get _cFocus   => _day ? kDFoc   : kN2;
+  Color get _cSymBg   => _day ? const Color(0xFF1A2A1A) : kNBg; // green-tinted form bg
+  Color get _cSymFg   => _day ? kDGps   : kN1;
+  Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A) : kNBg; // green-tinted save bg
   Color get _cCancel  => _day ? Colors.white38 : kN2;
-  Color get _cDlgBg   => _day ? const Color(0xFF1A1A1A) : kNBg;
-  Color get _cDlgBody => _day ? Colors.white54             : const Color(0xFF882222);
+  Color get _cDlgBg   => _day ? kDDiv   : kNBg;
+  Color get _cDlgBody => _day ? Colors.white54 : kN2;
 
   void _confirmDelete() {
     Navigator.pop(context);

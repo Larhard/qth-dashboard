@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart' show Color;
 import 'package:get_storage/get_storage.dart';
 
-// ── Night-mode colour system ───────────────────────────────────────────────
+// ── Night-mode colour palette ─────────────────────────────────────────────
 // All entries share hue ≈ 0° (pure red family).  Vary only in lightness so
 // every dark-mode screen has a cohesive, easily-distinguished palette.
 // Use these constants in every screen instead of raw Color literals so that
@@ -14,6 +14,57 @@ const kN4    = Color(0xFF331111); // very dim   — hints, disabled
 const kNBg   = Color(0xFF1A0000); // tile / card background
 const kNDiv  = Color(0xFF250505); // dividers, borders
 const kNSheet= Color(0xFF0A0000); // modal / bottom-sheet background
+
+// ── Day-mode colour palette ───────────────────────────────────────────────
+// Each semantic category gets its own hue for clarity; sub-text / label
+// variants use the same hue family but darker.  Unlike the night palette
+// (single hue, varying brightness), day uses colour as a data-type signal.
+// All kD* constants replace raw Color literals throughout the app.
+
+// Neutral text hierarchy (on dark panel surfaces)
+const kDFg0  = Color(0xFFFFFFFF); // primary   — headings, primary values
+const kDFg1  = Color(0xFFEEEEEE); // secondary — sub-values
+const kDFg2  = Color(0xFFCCCCCC); // tertiary  — speed, altitude, accuracy
+const kDFg3  = Color(0xFF888888); // dim       — labels, inactive icons
+const kDFg4  = Color(0xFF666666); // very dim  — hints, disabled text
+
+// Heading / GPS — green family (also: IARU locator, UTC clock, north marker)
+const kDGps  = Color(0xFF55DD55); // GPS heading · IARU locator · UTC time
+const kDGpsL = Color(0xFF3DBF3D); // GPS / locator sub-label
+
+// TRK (smoothed track bearing) — yellow-green
+const kDTrk  = Color(0xFF88CC33);
+
+// Emergency / MOB — red family
+const kDEmg  = Color(0xFFFF3333); // MOB name, arrow, highlight
+const kDEmgS = Color(0xFFDD3333); // MOB coordinates (softer red)
+const kDEmgBg= Color(0xFFB71C1C); // MOB card background
+
+// Stale / warning indicator — orange-red
+const kDStale= Color(0xFFFF7043);
+
+// Navigation waypoint — deep-orange family
+const kDNav  = Color(0xFFFF6E40); // nav waypoint name / arrow
+const kDNavL = Color(0xFFFF8F00); // nav waypoint sub-text / label
+
+// MGRS · local time · amber accents — orange-amber family
+const kDAmb  = Color(0xFFFFA726); // MGRS value, local time, save-lock
+const kDAmbs = Color(0xFFE65100); // MGRS label, local-time label, large-city sub
+
+// City location tiers
+const kDCityL = Color(0xFFFF9800); // large city — orange
+const kDCityP = Color(0xFFFFD740); // precise city — amber (also: warnings)
+const kDCityD = Color(0xFFC6FF00); // detailed city — lime
+const kDCityDS= Color(0xFFAEEA00); // detailed city sub — lime-dark
+
+// Port / water features — cyan family
+const kDPort  = Color(0xFF00E5FF); // port name, live-lock badge
+const kDPortL = Color(0xFF00ACC1); // port sub-text, live-lock label
+
+// UI chrome (on the app's dark-panel surface)
+const kDDiv   = Color(0xFF1A1A1A); // dividers, separators
+const kDBrd   = Color(0xFF333333); // input / tile borders
+const kDFoc   = Color(0xFF555555); // focused input border
 
 enum SpeedUnit { metric, nautical, imperial }
 

@@ -139,35 +139,37 @@ class _HomeScreenState extends State<HomeScreen>
   //   Ghost     0xFF441111  — barely-there (dividers, secondary arrow, borders)
 
   // Text hierarchy
-  Color get _cText1 => _dayMode ? Colors.white                : kN1;
-  Color get _cText2 => _dayMode ? const Color(0xFFEEEEEE)     : kN2;
-  Color get _cText3 => _dayMode ? const Color(0xFFCCCCCC)     : kN3;
+  Color get _cText1 => _dayMode ? kDFg0 : kN1;
+  Color get _cText2 => _dayMode ? kDFg1 : kN2;
+  Color get _cText3 => _dayMode ? kDFg2 : kN3;
   // Element-specific
-  Color get _cSpeed   => _dayMode ? const Color(0xFFD8D8D8)   : kN2;
-  Color get _cAltAcc  => _dayMode ? const Color(0xFFCCCCCC)   : kN2;
-  Color get _cStale   => _dayMode ? const Color(0xFFFF7043)   : kN1;
-  // IARU locator now green (matches GPS arrow + UTC clock) — freed cyan goes to port
-  Color get _cLocator => _dayMode ? const Color(0xFF55DD55)   : kN2;
-  Color get _cLocatorLabel => _dayMode ? const Color(0xFF3DBF3D) : kN3;
-  Color get _cMgrs    => _dayMode ? const Color(0xFFFFA726)   : kN2;
-  Color get _cMgrsLabel => _dayMode ? const Color(0xFFE65100) : kN3;
-  Color get _cTime    => _dayMode
-      ? (_timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D))
+  Color get _cSpeed   => _dayMode ? kDFg2   : kN2;
+  Color get _cAltAcc  => _dayMode ? kDFg2   : kN2;
+  Color get _cStale   => _dayMode ? kDStale : kN1;
+  // IARU locator — green (same family as GPS heading and UTC clock)
+  Color get _cLocator      => _dayMode ? kDGps  : kN2;
+  Color get _cLocatorLabel => _dayMode ? kDGpsL : kN3;
+  // MGRS — amber-orange family
+  Color get _cMgrs      => _dayMode ? kDAmb  : kN2;
+  Color get _cMgrsLabel => _dayMode ? kDAmbs : kN3;
+  // Clock: UTC shares GPS green; local time shares MGRS amber
+  Color get _cTime => _dayMode
+      ? (_timeUtc ? kDGps : kDAmb)
       : kN2;
   Color get _cTimeLabel => _dayMode
-      ? (_timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100))
+      ? (_timeUtc ? kDGpsL : kDAmbs)
       : kN3;
   // GPS-lock toggle indicator
-  Color get _cSaveLock => _dayMode ? const Color(0xFFFFAB40) : kN3;
-  Color get _cLiveLock => _dayMode ? const Color(0xFF26C6DA) : kN1;
-  // Active waypoint / MOB card
-  Color get _cWptName   => _dayMode ? const Color(0xFFFF3333) : kN1;
-  Color get _cWptArrow  => _dayMode ? const Color(0xFFFF3333) : kN1;
-  Color get _cWptData   => _dayMode ? const Color(0xFFFF2020) : kN2;
-  Color get _cWptCoords => _dayMode ? const Color(0xFFDD3333) : kN2;
+  Color get _cSaveLock => _dayMode ? kDAmb  : kN3;
+  Color get _cLiveLock => _dayMode ? kDPort : kN1;
+  // Active waypoint / MOB card — red emergency family
+  Color get _cWptName   => _dayMode ? kDEmg  : kN1;
+  Color get _cWptArrow  => _dayMode ? kDEmg  : kN1;
+  Color get _cWptData   => _dayMode ? kDEmg  : kN2;
+  Color get _cWptCoords => _dayMode ? kDEmgS : kN2;
   // MOB button
-  Color get _cMobBg   => _dayMode ? const Color(0xFFB71C1C) : kN3;
-  Color get _cMobText => _dayMode ? Colors.white              : kN1;
+  Color get _cMobBg   => _dayMode ? kDEmgBg : kN3;
+  Color get _cMobText => _dayMode ? kDFg0   : kN1;
 
   void _toggleDayMode() {
     HapticFeedback.mediumImpact();
@@ -210,12 +212,12 @@ class _HomeScreenState extends State<HomeScreen>
     _       => _compassHeading,
   };
 
-  // GPS=green, TRK=lime-green (slightly different tone), MAG=white
+  // GPS=green (kDGps), TRK=yellow-green (kDTrk), MAG=white (kDFg0).
   // Night: all shift to reds with distinct brightness.
   Color get _headingColor => switch (_primarySourceId) {
-    _srcGps => _dayMode ? const Color(0xFF55DD55) : kN1,
-    _srcTrk => _dayMode ? const Color(0xFF88CC33) : kN2,  // slightly dimmer than GPS
-    _       => _dayMode ? Colors.white             : kN3,  // MAG dimmest primary
+    _srcGps => _dayMode ? kDGps : kN1,
+    _srcTrk => _dayMode ? kDTrk : kN2,
+    _       => _dayMode ? kDFg0 : kN3,
   };
 
   String get _sourceLabel => switch (_primarySourceId) {
@@ -226,27 +228,27 @@ class _HomeScreenState extends State<HomeScreen>
 
   Color get _secondaryHeadingColor {
     if (_headingSourceMode == HeadingSourceMode.auto) {
-      return _dayMode ? Colors.white : kN2; // MAG secondary
+      return _dayMode ? kDFg0 : kN2; // MAG secondary in auto
     }
     // magOnly: secondary is TRK or GPS
     if (_track.bearing != null) {
-      return _dayMode ? const Color(0xFF88CC33) : kN2; // TRK secondary
+      return _dayMode ? kDTrk : kN2; // TRK secondary
     }
-    return _dayMode ? const Color(0xFF55DD55) : kN2;   // GPS secondary
+    return _dayMode ? kDGps : kN2;   // GPS secondary
   }
 
-  // City accent colours collapse to dim red in night mode.
+  // City accent colours — each tier has a distinct hue; night collapses to red.
   Color get _cityColor => !_dayMode ? kN2 : switch (CityService.instance.mode) {
-    CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
-    CityMode.precise  => const Color(0xFFFFD740),  // amber    — regional
-    CityMode.detailed => const Color(0xFFC6FF00),  // lime     — local detail
-    CityMode.port     => const Color(0xFF00E5FF),  // nautical cyan (freed from IARU)
+    CityMode.large    => kDCityL, // orange   — global overview
+    CityMode.precise  => kDCityP, // amber    — regional
+    CityMode.detailed => kDCityD, // lime     — local detail
+    CityMode.port     => kDPort,  // cyan     — port/nautical
   };
   Color get _citySubColor => !_dayMode ? kN3 : switch (CityService.instance.mode) {
-    CityMode.large    => const Color(0xFFE65100),  // deep orange
-    CityMode.precise  => const Color(0xFFFFAB40),  // light amber
-    CityMode.detailed => const Color(0xFFAEEA00),  // darker lime
-    CityMode.port     => const Color(0xFF00ACC1),  // darker cyan sub-text
+    CityMode.large    => kDAmbs,  // deep orange
+    CityMode.precise  => kDAmb,   // amber
+    CityMode.detailed => kDCityDS,// lime-dark
+    CityMode.port     => kDPortL, // cyan sub-text
   };
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -1075,7 +1077,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Color get _cDivider => _dayMode ? const Color(0xFF1A1A1A) : kNDiv;
+  Color get _cDivider => _dayMode ? kDDiv : kNDiv;
 
   Widget _divider() => Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1106,7 +1108,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (navWp != null) {
       // Day: deep orange-red — clearly distinct from city oranges/amber/lime.
     // Night: medium red (consistent with palette).
-    final navColor = _dayMode ? const Color(0xFFFF6E40) : kN1;
+    final navColor = _dayMode ? kDNav : kN1;
       result.add((
         bearingDeg: bearing(pos.latitude, pos.longitude, navWp.lat, navWp.lon),
         color: navColor,
@@ -1722,8 +1724,8 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _navWptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final navColor = _dayMode ? const Color(0xFFFF6E40) : kN1;
-    final navSub   = _dayMode ? const Color(0xFFFF8F00) : const Color(0xFF661111);
+    final navColor = _dayMode ? kDNav : kN1;
+    final navSub   = _dayMode ? kDNavL : kN3;
     final arrowSz  = portrait ? 50.0 : 44.0;
     final dataFz   = portrait ? 22.0 : 20.0;
     // Same hold-to-deactivate animation as MOB, targeting _WptHoldTarget.nav.
@@ -1968,14 +1970,11 @@ class _CityDetailSheet extends StatelessWidget {
 
   bool get _isPort => nc.city.portType.isNotEmpty;
 
-  Color get _cLabel  => dayMode ? const Color(0xFF888888) : const Color(0xFF882222);
-  Color get _cValue  => dayMode ? Colors.white             : const Color(0xFFCC3333);
-  // Accent: cyan in day (maritime), medium red in night (night-safe)
-  Color get _cAccent => dayMode ? const Color(0xFF00E5FF)  : const Color(0xFF882222);
-  // Warning: amber in day, bright red in night
-  Color get _cWarn   => dayMode ? const Color(0xFFFFD740)  : const Color(0xFFCC3333);
-  // Link: blue in day, medium red in night
-  Color get _cLink   => dayMode ? const Color(0xFF29B6F6)  : const Color(0xFF882222);
+  Color get _cLabel  => dayMode ? kDFg3   : kN3;
+  Color get _cValue  => dayMode ? kDFg0   : kN1;
+  Color get _cAccent => dayMode ? kDPort  : kN2;  // cyan (maritime) / night-safe red
+  Color get _cWarn   => dayMode ? kDCityP : kN1;  // amber warning / bright red
+  Color get _cLink   => dayMode ? kDPort  : kN2;  // cyan link (no blue) / night-safe red
 
   // ── Copy-all ──────────────────────────────────────────────────────────────
 
@@ -2252,24 +2251,22 @@ class _CityDetailSheet extends StatelessWidget {
     _   => s,
   };
 
-  // Shelter quality colour — graded in day (green→red), graded in night (all reds).
-  // In night mode brighter red = better shelter so the relative quality reads
-  // the same without using non-red colours.
+  // Shelter quality — day: green→amber→orange-red scale; night: brighter = better.
   Color _shelterColor(String s) {
     if (dayMode) {
       return switch (s) {
-        'E' => const Color(0xFF55DD55),
-        'G' => const Color(0xFF9CCC65),
-        'F' => const Color(0xFFFFD740),
-        'P' => const Color(0xFFFF7043),
+        'E' => kDGps,              // excellent — bright green
+        'G' => const Color(0xFF9CCC65), // good — mid green (between kDGps and kDTrk)
+        'F' => kDCityP,            // fair — amber warning
+        'P' => kDStale,            // poor — orange-red
         _   => _cValue,
       };
     } else {
       return switch (s) {
-        'E' => const Color(0xFFCC3333),
-        'G' => const Color(0xFF882222),
-        'F' => const Color(0xFF661111),
-        'P' => const Color(0xFF551111),
+        'E' => kN1,  // excellent — brightest red
+        'G' => kN2,
+        'F' => kN3,
+        'P' => kN4,  // poor — dimmest
         _   => _cValue,
       };
     }
