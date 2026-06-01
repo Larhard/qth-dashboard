@@ -118,13 +118,7 @@ class _HomeScreenState extends State<HomeScreen>
   // When false (default) the GPS stream is cancelled on screen-off to save
   // battery. When true, the stream keeps running so TRK stays live and the
   // first glance after unlock shows fresh data instantly.
-  static const _toggleHoldMs = 1500;
-  static const _toggleRewindPerFrame = 0.08;
   bool _gpsOnLock = false;
-  late final Ticker _toggleTicker;
-  final Stopwatch _toggleWatch = Stopwatch();
-  bool _toggling = false;
-  double _toggleProgress = 0.0;
 
   // ── Day / Night mode ──────────────────────────────────────────────────────
   // Day  : full-contrast palette — readable in direct sunlight.
@@ -217,7 +211,7 @@ class _HomeScreenState extends State<HomeScreen>
   Color get _headingColor => switch (_primarySourceId) {
     _srcGps => _dayMode ? kDGps : kN1,
     _srcTrk => _dayMode ? kDTrk : kN2,
-    _       => _dayMode ? kDFg0 : kN3,
+    _       => _dayMode ? kDFg0 : kN2,  // MAG: kN2 when primary so it stays readable
   };
 
   String get _sourceLabel => switch (_primarySourceId) {
@@ -228,13 +222,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   Color get _secondaryHeadingColor {
     if (_headingSourceMode == HeadingSourceMode.auto) {
-      return _dayMode ? kDFg0 : kN2; // MAG secondary in auto
+      return _dayMode ? kDFg0 : kN3; // MAG secondary — dimmer than primary
     }
     // magOnly: secondary is TRK or GPS
     if (_track.bearing != null) {
-      return _dayMode ? kDTrk : kN2; // TRK secondary
+      return _dayMode ? kDTrk : kN3; // TRK secondary
     }
-    return _dayMode ? kDGps : kN2;   // GPS secondary
+    return _dayMode ? kDGps : kN3;   // GPS secondary
   }
 
   // City accent colours — each tier has a distinct hue; night collapses to red.
@@ -258,7 +252,6 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _holdTicker = createTicker(_onHoldTick);
     _syncPocketLock();
-    _toggleTicker = createTicker(_onToggleTick);
     _gpsOnLock = GetStorage().read<bool>('gps_on_lock') ?? false;
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
     _init();
@@ -268,7 +261,6 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _holdTicker.dispose();
-    _toggleTicker.dispose();
     _compassNotifier.dispose();
     _posSub?.cancel();
     _compassSub?.cancel();
@@ -289,7 +281,6 @@ class _HomeScreenState extends State<HomeScreen>
       _staleTimer?.cancel();
       _staleTimer = null;
       _cancelClear();
-      _cancelToggle();
       if (_gpsOnLock) {
         // Switch to a foreground-service-backed stream. Android throttles GPS
         // for background apps without a foreground service (API 26+); keeping
@@ -557,43 +548,9 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── GPS-on-lock toggle ────────────────────────────────────────────────────
-  void _startToggle() {
-    _toggling = true;
-    _toggleWatch..reset()..start();
-    if (!_toggleTicker.isActive) _toggleTicker.start();
-  }
-
-  void _cancelToggle() {
-    _toggling = false;
-    _toggleWatch..stop()..reset();
-    if (_toggleProgress > 0 && !_toggleTicker.isActive) _toggleTicker.start();
-  }
-
-  void _onToggleTick(Duration _) {
-    if (_toggling) {
-      final p = (_toggleWatch.elapsedMilliseconds / _toggleHoldMs).clamp(0.0, 1.0);
-      if (p != _toggleProgress) setState(() => _toggleProgress = p);
-      if (_toggleWatch.elapsedMilliseconds >= _toggleHoldMs) _finishToggle();
-    } else {
-      final next = (_toggleProgress - _toggleRewindPerFrame).clamp(0.0, 1.0);
-      setState(() => _toggleProgress = next);
-      if (next <= 0.0) _toggleTicker.stop();
-    }
-  }
-
-  void _finishToggle() {
-    _toggling = false;
-    _toggleWatch..stop()..reset();
-    _toggleTicker.stop();
+  void _toggleGpsLock() {
     HapticFeedback.lightImpact();
-    // Reset progress ring immediately so it doesn't stay filled during the
-    // async permission request that may follow.
-    setState(() => _toggleProgress = 0.0);
-
     if (!_gpsOnLock) {
-      // Enabling LIVE mode: background location permission is required on
-      // Android 10+ even when a foreground service is running — Android
-      // enforces the background location check once the screen is locked.
       _enableLiveModeWithPermission();
     } else {
       setState(() => _gpsOnLock = false);
@@ -621,11 +578,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showSettingSnack(String message) {
+    final bg = _dayMode ? const Color(0xFF1C1C1C) : kNBg;
+    final fg = _dayMode ? Colors.white70           : kN2;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message,
-          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5)),
-      backgroundColor: const Color(0xFF1C1C1C),
+      content: Text(message, style: TextStyle(color: fg, fontSize: 13, height: 1.5)),
+      backgroundColor: bg,
       duration: const Duration(milliseconds: 2500),
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -733,13 +691,13 @@ class _HomeScreenState extends State<HomeScreen>
     _syncPocketLock();
   }
 
-  void _showSnack(String msg) {
+  void _showSnack(String msg, {Duration duration = const Duration(milliseconds: 2000)}) {
+    final bg = _dayMode ? const Color(0xFF1C1C1C) : kNBg;
+    final fg = _dayMode ? Colors.white60           : kN2;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg,
-          style: const TextStyle(color: Colors.white60, fontSize: 13),
-          maxLines: 2),
-      backgroundColor: const Color(0xFF1C1C1C),
-      duration: const Duration(milliseconds: 2000),
+      content: Text(msg, style: TextStyle(color: fg, fontSize: 13), maxLines: 2),
+      backgroundColor: bg,
+      duration: duration,
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -752,15 +710,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _speedUnit = next);
     saveSpeedUnit(next);
     HapticFeedback.lightImpact();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(speedUnitLabel(next),
-          style: const TextStyle(color: Colors.white60, fontSize: 13)),
-      backgroundColor: const Color(0xFF1C1C1C),
-      duration: const Duration(milliseconds: 900),
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-    ));
+    _showSnack(speedUnitLabel(next), duration: const Duration(milliseconds: 900));
   }
 
   void _toggleCityMode() {
@@ -776,16 +726,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _copyToClipboard(String text) {
     Clipboard.setData(ClipboardData(text: text));
     HapticFeedback.lightImpact();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(text,
-          style: const TextStyle(color: Colors.white60, fontSize: 13),
-          maxLines: 2),
-      backgroundColor: const Color(0xFF1C1C1C),
-      duration: const Duration(milliseconds: 1200),
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-    ));
+    _showSnack(text, duration: const Duration(milliseconds: 1200));
   }
 
   Future<void> _openWaypoints() async {
@@ -1032,7 +973,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           const SizedBox(width: 12),
-          // ── Right: city at top, MOB pinned to bottom (60 % width) ────
+          // ── Right: city then waypoints/MOB (60 % width) ─────────────
           Flexible(
             flex: 6,
             fit: FlexFit.tight,
@@ -1043,32 +984,18 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               padding: const EdgeInsets.only(left: 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.max,
-                children: [
-                  if (_nearestCity != null) ...[
-                    _citySectionLandscape(_nearestCity!),
-                    _dividerCompact(),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_nearestCity != null) ...[
+                      _citySectionLandscape(_nearestCity!),
+                      _dividerCompact(),
+                    ],
+                    _wptSectionLandscape(pos),
                   ],
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.bottomLeft,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxHeight: MediaQuery.of(context).size.height * 0.52,
-                          ),
-                          child: SingleChildScrollView(
-                            reverse: true,
-                            child: _wptSectionLandscape(pos),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -1121,7 +1048,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (mob != null) {
       result.add((
         bearingDeg: bearing(pos.latitude, pos.longitude, mob.lat, mob.lon),
-        color: const Color(0xFFFF3333),
+        color: _dayMode ? kDEmg : kN0,
         sizeScale: 1.45,
       ));
     }
@@ -1264,10 +1191,8 @@ class _HomeScreenState extends State<HomeScreen>
                         ? compassBearing
                         : (_track.bearing ?? _lastValidGpsHeading);
                     if (sb == null) return const SizedBox.shrink();
-                    return _dayMode
-                        ? Opacity(opacity: 0.38,
-                            child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
-                        : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
+                    return Opacity(opacity: 0.38,
+                        child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80));
                   },
                 ),
                 ArrowWidget(bearingDeg: primary, color: color, size: 80),
@@ -1313,105 +1238,72 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── GPS lock mode indicator ───────────────────────────────────────────────
-  // Shows the current heading source (GPS/MAG) and the GPS-during-lock mode
-  // (SAVE / LIVE). Hold for 1.5 s to toggle the mode.
-  // Long-press the TRK line to open the debug screen.
+  // Shows the current heading source (GPS/MAG) and the GPS-during-lock mode.
+  // Long-press either badge to toggle it (same UX as pocket-lock).
   Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
     final modeColor = _gpsOnLock ? _cLiveLock : _cSaveLock;
-    final progressColor = _gpsOnLock ? _cSaveLock : _cLiveLock;
-    // Bar covers the source row only (single line height).
-    final barHeight = sourceFontSize * 1.6;
 
-    return Row(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Vertical progress bar — always 3 px wide, no layout shift.
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 3,
-              height: barHeight,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: FractionallySizedBox(
-                  heightFactor: _toggleProgress,
-                  child: Container(color: progressColor),
-                ),
-              ),
-            ),
-            // Spacer matching TRK line height so bar aligns correctly.
-            SizedBox(height: trkFontSize * 1.4),
-          ],
-        ),
-        const SizedBox(width: 8),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Row 1: GPS toggle + screen override toggle (same line).
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              // GPS @ lock — Listener handles the hold-to-toggle progress bar.
-              Listener(
-                onPointerDown: (_) => _startToggle(),
-                onPointerUp: (_) => _cancelToggle(),
-                onPointerCancel: (_) => _cancelToggle(),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(_sourceLabel,
-                      style: TextStyle(
-                          fontSize: sourceFontSize,
-                          color: _cText2,
-                          letterSpacing: 2.5)),
-                  const SizedBox(width: 6),
-                  Icon(_gpsOnLock ? Icons.gps_fixed : Icons.gps_off,
-                      size: sourceFontSize - 1, color: modeColor),
-                  Text('@',
-                      style: TextStyle(
-                          fontSize: sourceFontSize - 2,
-                          color: modeColor,
-                          height: 1.0)),
-                  Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
-                ]),
-              ),
-              // Screen pocket-lock toggle — long-press, mirrors GPS@lock style.
-              // lock @ sensors   = pocket-lock ON  (screen locks when covered)
-              // lock_open @ sensors = pocket-lock OFF (default, no detection)
-              const SizedBox(width: 8),
-              GestureDetector(
-                onLongPress: _togglePocketLock,
-                behavior: HitTestBehavior.opaque,
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.smartphone,
-                      size: sourceFontSize,
-                      color: _pocketLockEnabled ? _cLiveLock : _cText3),
-                  Icon(
-                    _pocketLockEnabled ? Icons.lock : Icons.lock_open,
-                    size: sourceFontSize - 1,
-                    color: _pocketLockEnabled ? _cLiveLock : _cText3,
-                  ),
-                  Text('@',
-                      style: TextStyle(
-                          fontSize: sourceFontSize - 2,
-                          color: _pocketLockEnabled ? _cLiveLock : _cText3,
-                          height: 1.0)),
-                  Icon(Icons.sensors,
-                      size: sourceFontSize - 1,
-                      color: _pocketLockEnabled ? _cLiveLock : _cText3),
-                ]),
-              ),
+        // Row 1: GPS toggle + pocket-lock toggle (same line).
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          // GPS @ lock — long-press to toggle, matches pocket-lock UX.
+          GestureDetector(
+            onLongPress: _toggleGpsLock,
+            behavior: HitTestBehavior.opaque,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(_sourceLabel,
+                  style: TextStyle(
+                      fontSize: sourceFontSize,
+                      color: _cText2,
+                      letterSpacing: 2.5)),
+              const SizedBox(width: 6),
+              Icon(_gpsOnLock ? Icons.gps_fixed : Icons.gps_off,
+                  size: sourceFontSize - 1, color: modeColor),
+              Text('@',
+                  style: TextStyle(
+                      fontSize: sourceFontSize - 2,
+                      color: modeColor,
+                      height: 1.0)),
+              Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
             ]),
-            // Row 2: TRK bearing.
-            Text(
-              _track.bearing != null
-                  ? 'TRK ${_track.bearing!.round()}°'
-                  : 'TRK ---',
-              style: TextStyle(
-                  fontSize: trkFontSize,
-                  color: _cText3,
-                  letterSpacing: 1.5),
-            ),
-          ],
+          ),
+          // Pocket-lock toggle
+          const SizedBox(width: 8),
+          GestureDetector(
+            onLongPress: _togglePocketLock,
+            behavior: HitTestBehavior.opaque,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.smartphone,
+                  size: sourceFontSize,
+                  color: _pocketLockEnabled ? _cLiveLock : _cText3),
+              Icon(
+                _pocketLockEnabled ? Icons.lock : Icons.lock_open,
+                size: sourceFontSize - 1,
+                color: _pocketLockEnabled ? _cLiveLock : _cText3,
+              ),
+              Text('@',
+                  style: TextStyle(
+                      fontSize: sourceFontSize - 2,
+                      color: _pocketLockEnabled ? _cLiveLock : _cText3,
+                      height: 1.0)),
+              Icon(Icons.sensors,
+                  size: sourceFontSize - 1,
+                  color: _pocketLockEnabled ? _cLiveLock : _cText3),
+            ]),
+          ),
+        ]),
+        // Row 2: TRK bearing.
+        Text(
+          _track.bearing != null
+              ? 'TRK ${_track.bearing!.round()}°'
+              : 'TRK ---',
+          style: TextStyle(
+              fontSize: trkFontSize,
+              color: _cText3,
+              letterSpacing: 1.5),
         ),
       ],
     );
@@ -2087,15 +1979,21 @@ class _CityDetailSheet extends StatelessWidget {
     final text = _buildCopyText();
     Clipboard.setData(ClipboardData(text: text));
     HapticFeedback.lightImpact();
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-      content: Text('Details copied — paste into any app to share',
-          style: TextStyle(color: _cValue.withValues(alpha: 0.7), fontSize: 13)),
-      backgroundColor: const Color(0xFF1C1C1C),
-      duration: const Duration(milliseconds: 2000),
+    _showCopied(ctx, 'Details copied — paste into any app to share');
+  }
+
+  SnackBar _snack(String text, {Duration duration = const Duration(milliseconds: 1200)}) {
+    final bg = dayMode ? const Color(0xFF1C1C1C) : kNBg;
+    final fg = dayMode ? Colors.white60           : kN2;
+    return SnackBar(
+      content: Text(text, style: TextStyle(color: fg, fontSize: 13),
+          maxLines: 1, overflow: TextOverflow.ellipsis),
+      backgroundColor: bg,
+      duration: duration,
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-    ));
+    );
   }
 
   Widget _section(String title) => Padding(
@@ -2110,17 +2008,7 @@ class _CityDetailSheet extends StatelessWidget {
   void _showCopied(BuildContext ctx, String value) {
     Clipboard.setData(ClipboardData(text: value));
     HapticFeedback.lightImpact();
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-      content: Text(value,
-          style: TextStyle(color: _cValue.withValues(alpha: 0.7), fontSize: 13),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis),
-      backgroundColor: const Color(0xFF1C1C1C),
-      duration: const Duration(milliseconds: 1200),
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-    ));
+    ScaffoldMessenger.of(ctx).showSnackBar(_snack(value));
   }
 
   // ── Generic row — long-press copies the value ──────────────────────────────
@@ -2542,45 +2430,36 @@ class _BearingRingPainter extends CustomPainter {
         final rel   = (cardBearing - primaryHeading + 360) % 360;
         final angle = rel * _piOver180 - _halfPi;
         final isCardinal = i % 2 == 0;
-        final tLen  = isCardinal ? 8.0 : 5.0;
-        final tW    = isCardinal ? 2.2 : 1.2;
-        final alpha = isCardinal ? (dayMode ? 0.65 : 0.75) : (dayMode ? 0.35 : 0.45);
-        canvas.drawLine(
-          Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
-          Offset(cx + (_ringR - tLen) * _cos(angle), cy + (_ringR - tLen) * _sin(angle)),
-          Paint()..color = ringBase.withValues(alpha: alpha)..strokeWidth = tW..strokeCap = StrokeCap.round,
-        );
-        // North marker — filled circle + bold "N" for maximum visibility in sunlight.
-        // Day: bright green (GPS color, high contrast); Night: bright red.
+
         if (i == 0) {
-          const nColor = Color(0xFF55DD55); // same green as GPS heading in day mode
-          final nNightColor = const Color(0xFFFF3333);
-          final markerColor = dayMode ? nColor : nNightColor;
-          final lx = cx + (_ringR - 1) * _cos(angle);
-          final ly = cy + (_ringR - 1) * _sin(angle);
-          // Filled circle background
-          canvas.drawCircle(Offset(lx, ly), 7.5,
-              Paint()..color = markerColor..style = PaintingStyle.fill);
-          // Dark outline for day mode contrast
-          if (dayMode) {
-            canvas.drawCircle(Offset(lx, ly), 7.5,
-                Paint()..color = Colors.black.withValues(alpha: 0.30)
-                       ..style = PaintingStyle.stroke..strokeWidth = 1.0);
-          }
-          // "N" text in contrasting colour
+          // North: long thick red tick + "N" text inside the ring.
+          // Tick shape clearly distinguishes North from circular waypoint dots.
+          final nColor = dayMode ? kDEmg : kN0;
+          canvas.drawLine(
+            Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
+            Offset(cx + (_ringR - 14) * _cos(angle), cy + (_ringR - 14) * _sin(angle)),
+            Paint()..color = nColor..strokeWidth = 3.0..strokeCap = StrokeCap.round,
+          );
+          // "N" inside the ring just past the tick tip
+          final lx = cx + (_ringR - 22) * _cos(angle);
+          final ly = cy + (_ringR - 22) * _sin(angle);
           final nPainter = TextPainter(
-            text: TextSpan(
-              text: 'N',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                color: dayMode ? Colors.black : Colors.white,
-              ),
-            ),
+            text: TextSpan(text: 'N', style: TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w900, color: nColor,
+            )),
             textDirection: TextDirection.ltr,
           )..layout();
           nPainter.paint(canvas,
               Offset(lx - nPainter.width / 2, ly - nPainter.height / 2));
+        } else {
+          final tLen  = isCardinal ? 8.0 : 5.0;
+          final tW    = isCardinal ? 2.2 : 1.2;
+          final alpha = isCardinal ? (dayMode ? 0.65 : 0.75) : (dayMode ? 0.35 : 0.45);
+          canvas.drawLine(
+            Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
+            Offset(cx + (_ringR - tLen) * _cos(angle), cy + (_ringR - tLen) * _sin(angle)),
+            Paint()..color = ringBase.withValues(alpha: alpha)..strokeWidth = tW..strokeCap = StrokeCap.round,
+          );
         }
       }
 
@@ -2617,16 +2496,43 @@ class _BearingRingPainter extends CustomPainter {
       );
     }
 
+    // ── Heading cursor — fixed triangle at 12 o'clock (wind-rose only) ───
+    // Always points toward the top of the ring = the direction the user is heading.
+    // Drawn before POI dots so dots appear on top.
+    if (windRoseMode) {
+      // Triangle: base on ring at top, tip inward — indicates heading direction.
+      // cx at top = (cx, cy - _ringR). tip 9px inward from ring.
+      final hColor = dayMode
+          ? Colors.white.withValues(alpha: 0.85)
+          : kN1.withValues(alpha: 0.85);
+      final hPath = Path()
+        ..moveTo(cx, cy - (_ringR - 9))       // tip (inward)
+        ..lineTo(cx - 5, cy - _ringR)          // base left
+        ..lineTo(cx + 5, cy - _ringR)          // base right
+        ..close();
+      canvas.drawPath(hPath, Paint()..color = hColor..style = PaintingStyle.fill);
+    }
+
     // ── POI dots (same in both modes) ─────────────────────────────────────
     for (final m in markers) {
       final rel   = (m.bearingDeg - primaryHeading + 360) % 360;
       final angle = rel * _piOver180 - _halfPi;
       final dx    = cx + _ringR * _cos(angle);
       final dy    = cy + _ringR * _sin(angle);
+      // Glow
       canvas.drawCircle(Offset(dx, dy), _glowR * m.sizeScale,
           Paint()..color = m.color.withValues(alpha: 0.28)..style = PaintingStyle.fill);
+      // Dot
       canvas.drawCircle(Offset(dx, dy), _dotR * m.sizeScale,
           Paint()..color = m.color..style = PaintingStyle.fill);
+      // Emergency (MOB) gets a bright outline so it pops over any background.
+      if (m.sizeScale > 1.3) {
+        canvas.drawCircle(Offset(dx, dy), _dotR * m.sizeScale + 1.5,
+            Paint()
+              ..color = (dayMode ? Colors.white : kN0).withValues(alpha: 0.65)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.5);
+      }
     }
   }
 
