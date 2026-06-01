@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Declares the Device Administrator policies used by QTH Dashboard.
+  Only force-lock is requested — the minimum needed to lock the screen
+  when the phone is detected in a pocket.
+-->
+<device-admin>
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>

@@ -651,6 +651,25 @@ class _DebugScreenState extends State<DebugScreen> {
           _row('|B|  mGauss', fmt(mb != null ? mb * 10   : null, dec: 0)),
         ],
 
+        // ── Proximity ──────────────────────────────────────────────────────
+        _section('Proximity'),
+        _divider(),
+        () {
+          final proxCm  = dv('proximity');
+          final proxMax = dv('proximity_max');
+          final state   = (proxCm != null && proxMax != null)
+              ? (proxCm < proxMax ? 'NEAR' : 'FAR')
+              : null;
+          final na = avail.contains('proximity') ? null : 'N/A';
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _row('Distance  cm', na ?? fmt(proxCm, dec: 1),
+                vc: state == 'NEAR' ? _cWarn : null),
+            _row('Max range  cm', na ?? fmt(proxMax, dec: 1)),
+            _row('State', na ?? (state ?? '—'),
+                vc: state == 'NEAR' ? _cWarn : (state == 'FAR' ? _cGood : null)),
+          ]);
+        }(),
+
         // ── Gravity / tilt ─────────────────────────────────────────────────
         _section('Gravity / tilt'),
         _divider(),

@@ -75,11 +75,13 @@ class _HomeScreenState extends State<HomeScreen>
   // rebuilds when the heading hasn't changed enough to matter visually.
   double _lastRenderedCompassHeading = -1.0;
 
-  // ── Screen always-on override ─────────────────────────────────────────────
-  // When true, pocket detection is disabled — useful if the proximity sensor
-  // is unreliable. Persisted across sessions.
+  // ── Pocket-lock feature ───────────────────────────────────────────────────
+  // When enabled: proximity sensor detects pocket → screen locks after 5 s.
+  // Uses DevicePolicyManager.lockNow() if Device Admin is active; falls back to
+  // screenBrightness=0 otherwise.
+  // Default off — enabled by the user via long-press on the SCR toggle.
   static const _screenChannel = MethodChannel('qth_helper/screen');
-  bool _screenAlwaysOn = GetStorage().read<bool>('screen_always_on') ?? false;
+  bool _pocketLockEnabled = GetStorage().read<bool>('pocket_lock') ?? false;
 
   // ── Speed unit ────────────────────────────────────────────────────────────
   SpeedUnit _speedUnit = loadSpeedUnit();
@@ -206,7 +208,7 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _holdTicker = createTicker(_onHoldTick);
-    _syncScreenAlwaysOn();
+    _syncPocketLock();
     _toggleTicker = createTicker(_onToggleTick);
     _gpsOnLock = GetStorage().read<bool>('gps_on_lock') ?? false;
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
@@ -251,6 +253,8 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (state == AppLifecycleState.resumed) {
       _screenOn = true;
       _compassSub?.resume();
+      // Check if Device Admin was granted while the user was in the Settings screen.
+      _checkPocketLockOnResume();
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
       // Always restart the normal (no notification) stream on resume, whether
       // coming from SAVE (null sub) or LIVE (background foreground-service sub).
@@ -621,18 +625,70 @@ class _HomeScreenState extends State<HomeScreen>
     return '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}:${d.second.toString().padLeft(2,'0')}';
   }
 
-  void _syncScreenAlwaysOn() {
+  void _syncPocketLock() {
     _screenChannel
-        .invokeMethod('setAlwaysOn', {'value': _screenAlwaysOn})
+        .invokeMethod('setPocketLock', {'enabled': _pocketLockEnabled})
         .catchError((_) {});
   }
 
-  void _toggleScreenAlwaysOn() {
-    final next = !_screenAlwaysOn;
-    setState(() => _screenAlwaysOn = next);
-    GetStorage().write('screen_always_on', next);
-    _syncScreenAlwaysOn();
+  Future<void> _togglePocketLock() async {
+    final next = !_pocketLockEnabled;
     HapticFeedback.lightImpact();
+    try {
+      final res = await _screenChannel
+          .invokeMapMethod<String, dynamic>('setPocketLock', {'enabled': next});
+      final adminLaunched = res?['adminLaunched'] as bool? ?? false;
+      final adminActive   = res?['adminActive']   as bool? ?? false;
+      final enabled       = res?['enabled']       as bool? ?? false;
+
+      if (adminLaunched) {
+        // Android has opened the Device Admin activation screen.
+        _showSnack(
+          'Device Admin required for screen lock.\n'
+          'Tap "Activate" to enable the feature.',
+        );
+        // State will be updated in _checkPocketLockOnResume.
+      } else {
+        setState(() => _pocketLockEnabled = enabled);
+        GetStorage().write('pocket_lock', enabled);
+        _showSnack(enabled
+            ? (adminActive
+                ? 'Pocket lock ON — screen locks after 5 s in pocket'
+                : 'Pocket lock ON — screen dims in pocket (grant Device Admin for full lock)')
+            : 'Pocket lock OFF');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _checkPocketLockOnResume() async {
+    try {
+      final res = await _screenChannel
+          .invokeMapMethod<String, dynamic>('getPocketLockStatus');
+      final enabled = res?['enabled'] as bool? ?? false;
+      if (enabled != _pocketLockEnabled) {
+        setState(() => _pocketLockEnabled = enabled);
+        GetStorage().write('pocket_lock', enabled);
+        if (enabled) {
+          final adminActive = res?['adminActive'] as bool? ?? false;
+          _showSnack(adminActive
+              ? 'Pocket lock ON — Device Admin granted'
+              : 'Pocket lock ON');
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _showSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg,
+          style: const TextStyle(color: Colors.white60, fontSize: 13),
+          maxLines: 2),
+      backgroundColor: const Color(0xFF1C1C1C),
+      duration: const Duration(milliseconds: 2000),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    ));
   }
 
   void _cycleSpeedUnit() {
@@ -1101,8 +1157,8 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
-            // Spacer covering TRK + screen indicator lines.
-            SizedBox(height: trkFontSize * 2.9),
+            // Spacer matching TRK line height so bar aligns correctly.
+            SizedBox(height: trkFontSize * 1.4),
           ],
         ),
         const SizedBox(width: 8),
@@ -1110,31 +1166,61 @@ class _HomeScreenState extends State<HomeScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Source + lock-mode icon — Listener only here (GPS toggle).
-            Listener(
-              onPointerDown: (_) => _startToggle(),
-              onPointerUp: (_) => _cancelToggle(),
-              onPointerCancel: (_) => _cancelToggle(),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text(_usingGps ? 'GPS' : 'MAG',
-                    style: TextStyle(
-                        fontSize: sourceFontSize,
-                        color: _cText2,
-                        letterSpacing: 2.5)),
-                const SizedBox(width: 6),
-                // [gps_fixed/@/lock] = GPS keeps running through lock screen.
-                // [gps_off/@/lock]   = GPS pauses when screen locks.
-                // Reading: "GPS [on|off] at screen lock"
-                Icon(_gpsOnLock ? Icons.gps_fixed : Icons.gps_off,
-                    size: sourceFontSize - 1, color: modeColor),
-                Text('@',
-                    style: TextStyle(
-                        fontSize: sourceFontSize - 2,
-                        color: modeColor,
-                        height: 1.0)),
-                Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
-              ]),
-            ),
+            // Row 1: GPS toggle + screen override toggle (same line).
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              // GPS @ lock — Listener handles the hold-to-toggle progress bar.
+              Listener(
+                onPointerDown: (_) => _startToggle(),
+                onPointerUp: (_) => _cancelToggle(),
+                onPointerCancel: (_) => _cancelToggle(),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_usingGps ? 'GPS' : 'MAG',
+                      style: TextStyle(
+                          fontSize: sourceFontSize,
+                          color: _cText2,
+                          letterSpacing: 2.5)),
+                  const SizedBox(width: 6),
+                  Icon(_gpsOnLock ? Icons.gps_fixed : Icons.gps_off,
+                      size: sourceFontSize - 1, color: modeColor),
+                  Text('@',
+                      style: TextStyle(
+                          fontSize: sourceFontSize - 2,
+                          color: modeColor,
+                          height: 1.0)),
+                  Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
+                ]),
+              ),
+              // Screen pocket-lock toggle — long-press, mirrors GPS@lock style.
+              // lock @ sensors   = pocket-lock ON  (screen locks when covered)
+              // lock_open @ sensors = pocket-lock OFF (default, no detection)
+              const SizedBox(width: 8),
+              GestureDetector(
+                onLongPress: _togglePocketLock,
+                behavior: HitTestBehavior.opaque,
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('SCR',
+                      style: TextStyle(
+                          fontSize: sourceFontSize,
+                          color: _pocketLockEnabled ? _cLiveLock : _cText3,
+                          letterSpacing: 2.0)),
+                  const SizedBox(width: 4),
+                  Icon(
+                    _pocketLockEnabled ? Icons.lock : Icons.lock_open,
+                    size: sourceFontSize - 1,
+                    color: _pocketLockEnabled ? _cLiveLock : _cText3,
+                  ),
+                  Text('@',
+                      style: TextStyle(
+                          fontSize: sourceFontSize - 2,
+                          color: _pocketLockEnabled ? _cLiveLock : _cText3,
+                          height: 1.0)),
+                  Icon(Icons.sensors,
+                      size: sourceFontSize - 1,
+                      color: _pocketLockEnabled ? _cLiveLock : _cText3),
+                ]),
+              ),
+            ]),
+            // Row 2: TRK bearing.
             Text(
               _track.bearing != null
                   ? 'TRK ${_track.bearing!.round()}°'
@@ -1143,32 +1229,6 @@ class _HomeScreenState extends State<HomeScreen>
                   fontSize: trkFontSize,
                   color: _cText3,
                   letterSpacing: 1.5),
-            ),
-            // Screen pocket-sleep override — long-press to toggle.
-            // Sun = screen always on (override active, pocket ignored).
-            // Bedtime = pocket detection active (default).
-            GestureDetector(
-              onLongPress: _toggleScreenAlwaysOn,
-              behavior: HitTestBehavior.opaque,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(
-                  _screenAlwaysOn ? Icons.light_mode : Icons.bedtime_outlined,
-                  size: trkFontSize,
-                  color: _screenAlwaysOn
-                      ? (_dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222))
-                      : _cText3,
-                ),
-                const SizedBox(width: 3),
-                Text(
-                  _screenAlwaysOn ? 'ON' : 'AUTO',
-                  style: TextStyle(
-                      fontSize: trkFontSize * 0.85,
-                      color: _screenAlwaysOn
-                          ? (_dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222))
-                          : _cText3,
-                      letterSpacing: 1.0),
-                ),
-              ]),
             ),
           ],
         ),

@@ -1,7 +1,10 @@
 package com.elgassia.qthdashboard
 
 import android.annotation.SuppressLint
+import android.app.admin.DeviceAdminReceiver
+import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -25,37 +28,48 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), SensorEventListener {
 
-    // ── Pocket / proximity detection ──────────────────────────────────────────
+    // ── Pocket-lock / proximity detection ─────────────────────────────────────
     //
-    // Logic: FLAG_KEEP_SCREEN_ON is active when ANY of these is true:
-    //   • phone is charging                   (driving / sailing at powered helm)
-    //   • phone is NOT near the proximity sensor  (held in hand, on dash, etc.)
-    //   • Flutter "always-on" override is active  (broken-sensor fallback)
+    // When pocketLockEnabled is true and the phone is detected near a surface
+    // (pocket) for 5 consecutive seconds, the screen is locked:
+    //   • Device Admin active  → DevicePolicyManager.lockNow()  (true screen lock)
+    //   • Device Admin absent  → screenBrightness = 0.0f        (visual black + timeout)
     //
-    // Only when all three conditions are false (not charging, covered, no override)
-    // does the flag get cleared — and only after a 5-second sustained delay, so
-    // brief pocket bumps are ignored.
+    // The proximity sensor is registered ONLY when pocket-lock is enabled and
+    // the phone is not charging — zero sensor overhead otherwise.
     //
-    // The proximity sensor is registered only when pocket detection is meaningful
-    // (not charging, override off), keeping it completely idle the rest of the time.
+    // Default: feature is disabled.  User enables via the SCR toggle in the UI,
+    // which triggers the Device Admin activation prompt if not yet granted.
 
     private val sm by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
+    private val dpm by lazy { getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager }
+    private val adminComp by lazy { ComponentName(this, LockReceiver::class.java) }
+
     private var proxSensor: Sensor? = null
     private var proxRegistered = false
-    private var isNearby = false           // current proximity state
-    private var screenAlwaysOn = false     // Flutter override (disable pocket sleep)
+    private var isNearby = false           // current proximity reading
+    private var pocketLockEnabled = false  // persisted via Flutter / GetStorage
+    private var pendingEnable = false      // set while waiting for admin grant
     private val pocketHandler = Handler(Looper.getMainLooper())
 
-    // Applied only after the phone has been continuously covered for 5 s.
+    // Fired after 5 s of sustained pocket contact.
     private val sleepRunnable = Runnable {
-        if (isNearby && !isCharging() && !screenAlwaysOn) {
+        if (!isNearby || !pocketLockEnabled || isCharging()) return@Runnable
+        if (isAdminActive()) {
+            dpm.lockNow()   // true screen lock — requires Device Admin
+        } else {
+            // Fallback when admin was revoked after feature was enabled:
+            // black out the window immediately; backlight powers off after system timeout.
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(0.0f)
         }
     }
 
-    // Register proximity sensor only when it can usefully prevent battery drain.
+    private fun isAdminActive() = dpm.isAdminActive(adminComp)
+
+    // Register proximity only when pocket-lock is on and useful (not charging).
     private fun syncProximity() {
-        val needed = !isCharging() && !screenAlwaysOn && proxSensor != null
+        val needed = pocketLockEnabled && !isCharging() && proxSensor != null
         if (needed && !proxRegistered) {
             sm.registerListener(this, proxSensor!!, SensorManager.SENSOR_DELAY_NORMAL)
             proxRegistered = true
@@ -64,6 +78,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             proxRegistered = false
             pocketHandler.removeCallbacks(sleepRunnable)
             isNearby = false
+            // Restore screen state when feature is turned off or charger connected.
+            updateScreenKeepOn()
         }
     }
 
@@ -75,11 +91,19 @@ class MainActivity : FlutterActivity(), SensorEventListener {
     }
 
     private fun updateScreenKeepOn() {
-        if (isCharging() || !isNearby || screenAlwaysOn) {
+        // Screen stays on unless: pocket-lock on + phone covered + not charging.
+        val keepOn = !pocketLockEnabled || !isNearby || isCharging()
+        if (keepOn) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
         }
+        // clearFlags is handled exclusively by sleepRunnable after the 5-second delay.
+    }
+
+    private fun setScreenBrightness(value: Float) {
+        val lp = window.attributes
+        lp.screenBrightness = value
+        window.attributes = lp
     }
 
     // SensorEventListener — TYPE_PROXIMITY only.
@@ -89,10 +113,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         isNearby = event.values[0] < event.sensor.maximumRange
         pocketHandler.removeCallbacks(sleepRunnable)
         if (isNearby) {
-            // Delay — avoids reacting to brief pocket contact or accidental covers.
             pocketHandler.postDelayed(sleepRunnable, 5_000L)
         } else if (wasNearby) {
-            // Phone removed from pocket: restore keep-on immediately.
             updateScreenKeepOn()
         }
     }
@@ -107,10 +129,10 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         }
     }
 
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Show over the lock screen without PIN / fingerprint.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -129,8 +151,23 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             addAction(Intent.ACTION_POWER_DISCONNECTED)
         }
         registerReceiver(chargingReceiver, filter)
-        syncProximity()
         updateScreenKeepOn()
+    }
+
+    // Called when the user returns from the Device Admin activation screen.
+    override fun onResume() {
+        super.onResume()
+        if (pendingEnable) {
+            pendingEnable = false
+            if (isAdminActive()) {
+                // Admin was granted — complete the enable.
+                pocketLockEnabled = true
+                syncProximity()
+                updateScreenKeepOn()
+            }
+            // Flutter polls getPocketLockStatus on resume (didChangeAppLifecycleState)
+            // so no need to push from here.
+        }
     }
 
     override fun onDestroy() {
@@ -140,18 +177,54 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         super.onDestroy()
     }
 
+    // ── Flutter channels ──────────────────────────────────────────────────────
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ── Screen always-on override ────────────────────────────────────────
+        // ── Pocket-lock / screen control ─────────────────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/screen")
             .setMethodCallHandler { call, result ->
-                if (call.method == "setAlwaysOn") {
-                    screenAlwaysOn = call.argument<Boolean>("value") ?: false
-                    syncProximity()
-                    updateScreenKeepOn()
-                    result.success(null)
-                } else result.notImplemented()
+                when (call.method) {
+                    "setPocketLock" -> {
+                        val enable = call.argument<Boolean>("enabled") ?: false
+                        if (enable && !isAdminActive()) {
+                            // Launch Device Admin activation prompt.
+                            pendingEnable = true
+                            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp)
+                                putExtra(
+                                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                    "QTH Dashboard needs Device Administrator access to lock " +
+                                    "the screen when the phone is detected in a pocket."
+                                )
+                            }
+                            startActivity(intent)
+                            result.success(mapOf(
+                                "enabled"       to false,
+                                "adminActive"   to false,
+                                "adminLaunched" to true
+                            ))
+                        } else {
+                            pocketLockEnabled = enable
+                            if (!enable) {
+                                pocketHandler.removeCallbacks(sleepRunnable)
+                                isNearby = false
+                            }
+                            syncProximity()
+                            updateScreenKeepOn()
+                            result.success(mapOf(
+                                "enabled"       to pocketLockEnabled,
+                                "adminActive"   to isAdminActive(),
+                                "adminLaunched" to false
+                            ))
+                        }
+                    }
+                    "getPocketLockStatus" -> result.success(mapOf(
+                        "enabled"     to pocketLockEnabled,
+                        "adminActive" to isAdminActive()
+                    ))
+                    else -> result.notImplemented()
+                }
             }
 
         // ── Magnetic declination ─────────────────────────────────────────────
@@ -171,9 +244,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 }
             }
 
-        // ── GNSS satellite status (API 24+, used only by the debug screen) ───
-        // The EventChannel is idle when not subscribed — zero battery cost on
-        // the main dashboard.
+        // ── GNSS satellite status (debug screen only) ────────────────────────
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/gnss")
             .setStreamHandler(GnssStreamHandler(this))
 
@@ -182,6 +253,11 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             .setStreamHandler(SensorStreamHandler(this))
     }
 }
+
+// ── Device Admin receiver ─────────────────────────────────────────────────────
+// A minimal DeviceAdminReceiver subclass — just the policy declaration in XML
+// (res/xml/device_admin_receiver.xml) is what really matters.
+class LockReceiver : DeviceAdminReceiver()
 
 // ── GNSS stream ───────────────────────────────────────────────────────────────
 
@@ -240,10 +316,6 @@ private class GnssStreamHandler(private val activity: FlutterActivity) :
 }
 
 // ── Environmental / motion sensor stream ──────────────────────────────────────
-//
-// Emits a Map<String, Any?> at 2 Hz while the stream is active.
-// Automatically registers / unregisters SensorManager listeners so it costs
-// nothing when the debug screen is closed.
 
 private class SensorStreamHandler(private val activity: FlutterActivity) :
     EventChannel.StreamHandler, SensorEventListener {
@@ -252,26 +324,23 @@ private class SensorStreamHandler(private val activity: FlutterActivity) :
     private var sink: EventChannel.EventSink? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    // Latest cached values (updated by onSensorChanged)
     private val latest = mutableMapOf<String, Double>()
     private var magX:  Double? = null; private var magY:  Double? = null; private var magZ:  Double? = null
     private var gravX: Double? = null; private var gravY: Double? = null; private var gravZ: Double? = null
     private var linX:  Double? = null; private var linY:  Double? = null; private var linZ:  Double? = null
     private var initialSteps: Double? = null
 
-    // Which sensor keys are actually present on this device
     private val available = mutableSetOf<String>()
 
-    // Sensor type → map key
     private val scalarSensors = mapOf(
-        Sensor.TYPE_AMBIENT_TEMPERATURE to "temperature",  // °C  — rare
-        Sensor.TYPE_PRESSURE            to "pressure",     // hPa — barometer
-        Sensor.TYPE_LIGHT               to "light",        // lux
-        Sensor.TYPE_RELATIVE_HUMIDITY   to "humidity",     // %RH — rare
-        Sensor.TYPE_STEP_COUNTER        to "steps",        // cumulative, delta computed here
+        Sensor.TYPE_AMBIENT_TEMPERATURE to "temperature",
+        Sensor.TYPE_PRESSURE            to "pressure",
+        Sensor.TYPE_LIGHT               to "light",
+        Sensor.TYPE_RELATIVE_HUMIDITY   to "humidity",
+        Sensor.TYPE_STEP_COUNTER        to "steps",
+        Sensor.TYPE_PROXIMITY           to "proximity",
     )
 
-    // 2 Hz emission loop
     private val emitRunnable = object : Runnable {
         override fun run() {
             emit()
@@ -281,33 +350,27 @@ private class SensorStreamHandler(private val activity: FlutterActivity) :
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         sink = events
-        available.clear()
-        latest.clear()
+        available.clear(); latest.clear()
         magX = null;  magY = null;  magZ = null
         gravX = null; gravY = null; gravZ = null
         linX = null;  linY = null;  linZ = null
         initialSteps = null
 
-        // Register all scalar sensors that exist on this device
         for ((type, key) in scalarSensors) {
             sm.getDefaultSensor(type)?.also {
                 sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
                 available.add(key)
             }
         }
-
-        // 3-axis sensors
-        sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.also {
-            sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-            available.add("magnetic")
-        }
-        sm.getDefaultSensor(Sensor.TYPE_GRAVITY)?.also {
-            sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-            available.add("gravity")
-        }
-        sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)?.also {
-            sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-            available.add("linear_accel")
+        listOf(
+            Sensor.TYPE_MAGNETIC_FIELD     to "magnetic",
+            Sensor.TYPE_GRAVITY            to "gravity",
+            Sensor.TYPE_LINEAR_ACCELERATION to "linear_accel",
+        ).forEach { (type, key) ->
+            sm.getDefaultSensor(type)?.also {
+                sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+                available.add(key)
+            }
         }
 
         handler.post(emitRunnable)
@@ -353,7 +416,6 @@ private class SensorStreamHandler(private val activity: FlutterActivity) :
     private fun emit() {
         val s = sink ?: return
 
-        // Battery: level via BatteryManager, temperature via sticky broadcast
         val battIntent = try {
             activity.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         } catch (_: Exception) { null }
@@ -363,20 +425,18 @@ private class SensorStreamHandler(private val activity: FlutterActivity) :
         val battTempRaw = battIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
         val battTempC  = if (battTempRaw != Int.MIN_VALUE) battTempRaw / 10.0 else null
 
+        // Proximity max range needed to determine NEAR/FAR on the Dart side.
+        val proxMaxRange = sm.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.maximumRange?.toDouble()
+
         val data = HashMap<String, Any?>()
-        data["available"]    = available.toList()
+        data["available"]        = available.toList()
         data.putAll(latest)
-        data["mag_x"]        = magX
-        data["mag_y"]        = magY
-        data["mag_z"]        = magZ
-        data["grav_x"]       = gravX
-        data["grav_y"]       = gravY
-        data["grav_z"]       = gravZ
-        data["lin_x"]        = linX
-        data["lin_y"]        = linY
-        data["lin_z"]        = linZ
-        data["battery_pct"]  = battPct
-        data["battery_temp"] = battTempC
+        data["mag_x"]            = magX;   data["mag_y"]  = magY;   data["mag_z"]  = magZ
+        data["grav_x"]           = gravX;  data["grav_y"] = gravY;  data["grav_z"] = gravZ
+        data["lin_x"]            = linX;   data["lin_y"]  = linY;   data["lin_z"]  = linZ
+        data["battery_pct"]      = battPct
+        data["battery_temp"]     = battTempC
+        data["proximity_max"]    = proxMaxRange
 
         s.success(data)
     }
