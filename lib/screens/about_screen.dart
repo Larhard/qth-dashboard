@@ -121,37 +121,72 @@ class AboutScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => Theme(
-                data: ThemeData.dark().copyWith(
-                  scaffoldBackgroundColor: dayMode ? kDSnackBg : Colors.black,
-                  appBarTheme: AppBarTheme(
-                    backgroundColor: dayMode ? kDSnackBg : Colors.black,
-                    foregroundColor: dayMode ? kDFg0 : kN1,
-                    scrolledUnderElevation: 0,
-                    surfaceTintColor: Colors.transparent,
-                    elevation: 0,
+            onPressed: () {
+              final bg        = dayMode ? kDSnackBg : Colors.black;
+              final headColor = dayMode ? kDFg0     : kN1;
+              final textColor = dayMode ? kDFg1     : kN2;
+              final dimColor  = dayMode ? kDFg3     : kN3;
+              final divColor  = dayMode ? kDDiv     : kNDiv;
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => Theme(
+                  data: ThemeData.dark().copyWith(
+                    scaffoldBackgroundColor: bg,
+                    canvasColor: bg,
+                    cardColor: bg,
+                    dialogTheme: DialogThemeData(backgroundColor: bg),
+                    appBarTheme: AppBarTheme(
+                      backgroundColor: bg,
+                      foregroundColor: headColor,
+                      scrolledUnderElevation: 0,
+                      surfaceTintColor: Colors.transparent,
+                      elevation: 0,
+                      titleTextStyle: TextStyle(
+                          color: headColor, fontSize: 20, fontWeight: FontWeight.w600),
+                    ),
+                    colorScheme: ColorScheme.dark(
+                      surface: bg,
+                      onSurface: textColor,
+                      primary: headColor,
+                      onPrimary: bg,
+                      secondary: textColor,
+                      onSecondary: bg,
+                      surfaceTint: Colors.transparent,
+                    ),
+                    // LicensePage renders its text via textTheme, not just colorScheme.
+                    textTheme: ThemeData.dark().textTheme.apply(
+                      bodyColor:    textColor,
+                      displayColor: headColor,
+                    ),
+                    listTileTheme: ListTileThemeData(
+                      textColor: textColor,
+                      iconColor: dimColor,
+                      tileColor: bg,
+                    ),
+                    expansionTileTheme: ExpansionTileThemeData(
+                      textColor:          headColor,
+                      collapsedTextColor: textColor,
+                      iconColor:          headColor,
+                      collapsedIconColor: dimColor,
+                      backgroundColor:    bg,
+                      collapsedBackgroundColor: bg,
+                    ),
+                    dividerColor: divColor,
+                    iconTheme: IconThemeData(color: dimColor),
                   ),
-                  colorScheme: ColorScheme.dark(
-                    surface: dayMode ? kDSnackBg : Colors.black,
-                    onSurface: dayMode ? kDFg1 : kN2,
-                    primary: dayMode ? kDFg0 : kN1,
-                    surfaceTint: Colors.transparent,
+                  child: const LicensePage(
+                    applicationName: 'QTH Dashboard',
+                    applicationVersion: 'v1.1.0',
+                    applicationLegalese:
+                        '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
+                        'City data © GeoNames (CC BY 4.0)\n'
+                        'Port data: NGA WPI (public domain) + '
+                        '© GeoNames (CC BY 4.0) + '
+                        '© OpenStreetMap contributors (ODbL)',
                   ),
-                ),
-                child: const LicensePage(
-                  applicationName: 'QTH Dashboard',
-                  applicationVersion: 'v1.1.0',
-                  applicationLegalese:
-                      '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
-                      'City data © GeoNames (CC BY 4.0)\n'
-                      'Port data: NGA WPI (public domain) + '
-                      '© GeoNames (CC BY 4.0) + '
-                      '© OpenStreetMap contributors (ODbL)',
-                ),
-              )),
-            ),
+                )),
+              );
+            },
             icon: const Icon(Icons.article_outlined, size: 18),
             label: const Text('Open Source Licences'),
             style: OutlinedButton.styleFrom(
