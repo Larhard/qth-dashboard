@@ -118,21 +118,6 @@ class WaypointService {
     _store.remove(_activeKey);
   }
 
-  // ── Shared ─────────────────────────────────────────────────────────────────
-
-  void remove(String id) {
-    _waypoints.removeWhere((w) => w.id == id);
-    if (_activeId == id) {
-      _activeId = null;
-      _store.remove(_activeKey);
-    }
-    if (_emergencyId == id) {
-      _emergencyId = null;
-      _store.remove(_emerKey);
-    }
-    _persist();
-  }
-
   void rename(String id, String name) {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
@@ -156,6 +141,45 @@ class WaypointService {
     }
   }
 
+  // ── Import highlighting & undo ────────────────────────────────────────────
+  // IDs of the most recently imported batch — available for undo and highlight.
+  final List<String> _lastImportIds    = [];
+  final Set<String>  _highlightedIds   = {};
+
+  Set<String> get highlightedImportIds => Set.unmodifiable(_highlightedIds);
+  bool        get canUndoImport        => _lastImportIds.isNotEmpty;
+
+  void clearImportHighlights() {
+    _highlightedIds.clear();
+    _lastImportIds.clear();
+  }
+
+  /// Remove every waypoint that was added in the last import batch.
+  void undoLastImport() {
+    for (final id in List.of(_lastImportIds)) {
+      remove(id);
+    }
+    _lastImportIds.clear();
+    _highlightedIds.clear();
+  }
+
+  // ── Shared ─────────────────────────────────────────────────────────────────
+
+  void remove(String id) {
+    _waypoints.removeWhere((w) => w.id == id);
+    if (_activeId == id) {
+      _activeId = null;
+      _store.remove(_activeKey);
+    }
+    if (_emergencyId == id) {
+      _emergencyId = null;
+      _store.remove(_emerKey);
+    }
+    _lastImportIds.remove(id);
+    _highlightedIds.remove(id);
+    _persist();
+  }
+
   // Called by ReorderableListView.onReorderItem — index is already adjusted.
   void reorder(int oldIndex, int newIndex) {
     final w = _waypoints.removeAt(oldIndex);
@@ -165,30 +189,34 @@ class WaypointService {
 
   /// Import parsed GPX waypoints.
   ///
-  /// Rules:
-  ///   - Exact duplicate (same name AND position within ~10 m): silently skipped.
-  ///   - Name conflict (same name, different position): new point is renamed
-  ///     "Name (2)", "Name (3)", … so the existing waypoint is never touched.
-  ///   - Position conflict (same position, different name): imported as-is
-  ///     (intentionally different name is preserved).
-  ///   - New point: imported with original name.
+  /// Duplicate rules (applied in order):
+  ///   1. Position duplicate: any existing point within ~10 m → skip.
+  ///      This prevents re-importing "MOB 1" after it was already saved as
+  ///      "MOB 1 (2)" at the same position.
+  ///   2. Name conflict: same name, distinct position → rename "Name (2)",
+  ///      "Name (3)", …  The existing waypoint is never modified.
+  ///   3. New point → imported as-is.
   ///
-  /// Returns a record with `added`, `skipped` (exact duplicates), and
-  /// `renamed` (name-conflict renames) counts.
+  /// Returns counts: added / skipped (position dup) / renamed (name conflict).
   ({int added, int skipped, int renamed}) importWaypoints(List<GpxWaypoint> items) {
+    // New import batch replaces any previous highlight.
+    _lastImportIds.clear();
+    _highlightedIds.clear();
+
     int added = 0, skipped = 0, renamed = 0;
     final baseMs = DateTime.now().millisecondsSinceEpoch;
+    const tol = 0.0001; // ~10 m in degrees
 
     for (final item in items) {
-      // Exact duplicate: same name AND within ~10 m → skip silently.
-      const tol = 0.0001; // ~10 m in degrees
-      final exactDup = _waypoints.any((e) =>
-          e.name == item.name &&
+      // 1. Position duplicate — skip regardless of name.
+      if (_waypoints.any((e) =>
           (e.lat - item.lat).abs() < tol &&
-          (e.lon - item.lon).abs() < tol);
-      if (exactDup) { skipped++; continue; }
+          (e.lon - item.lon).abs() < tol)) {
+        skipped++;
+        continue;
+      }
 
-      // Name conflict: same name but different location → auto-rename new point.
+      // 2. Name conflict — rename the incoming point.
       String name = item.name;
       if (_waypoints.any((e) => e.name == name)) {
         int n = 2;
@@ -197,13 +225,16 @@ class WaypointService {
         renamed++;
       }
 
+      final id = '${baseMs + added}';
       _waypoints.add(Waypoint(
-        id: '${baseMs + added}',
+        id: id,
         name: name,
         lat: item.lat,
         lon: item.lon,
         timestamp: item.time,
       ));
+      _lastImportIds.add(id);
+      _highlightedIds.add(id);
       added++;
     }
     if (added > 0) _persist();

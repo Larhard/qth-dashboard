@@ -38,6 +38,8 @@ class WaypointsScreen extends StatefulWidget {
 
 class _WaypointsScreenState extends State<WaypointsScreen> {
   Timer? _ticker;
+  final Set<String> _selected = {};
+  bool get _inSelectMode => _selected.isNotEmpty;
 
   bool get _day => widget.dayMode;
   Color get _cPrimary  => _day ? kDFg0 : kN1;
@@ -58,6 +60,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   @override
   void dispose() {
     _ticker?.cancel();
+    WaypointService.instance.clearImportHighlights();
     super.dispose();
   }
 
@@ -75,14 +78,27 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     ));
   }
 
+  // ── Multi-select delete ───────────────────────────────────────────────────
+  void _deleteSelected() {
+    final count = _selected.length;
+    for (final id in List.of(_selected)) {
+      WaypointService.instance.remove(id);
+    }
+    setState(() => _selected.clear());
+    _snack('Deleted $count waypoint${count == 1 ? '' : 's'}.');
+  }
+
   // ── GPX export ────────────────────────────────────────────────────────────
   Future<void> _exportGpx() async {
-    final wpts = WaypointService.instance.waypoints;
+    final all   = WaypointService.instance.waypoints;
+    final wpts  = (_inSelectMode && _selected.isNotEmpty)
+        ? all.where((w) => _selected.contains(w.id)).toList()
+        : all.toList();
     if (wpts.isEmpty) { _snack('No waypoints to export.'); return; }
 
     final dir  = await getTemporaryDirectory();
     final file = File('${dir.path}/qth_waypoints.gpx');
-    await file.writeAsString(GpxUtils.build(wpts.toList()));
+    await file.writeAsString(GpxUtils.build(wpts));
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/gpx+xml')],
       subject: 'QTH Dashboard waypoints',
@@ -119,7 +135,31 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     }
     final r = WaypointService.instance.importWaypoints(parsed);
     setState(() {});
-    _snack(_importSummary(r, parsed.length));
+    _snackWithUndo(_importSummary(r, parsed.length), r.added);
+  }
+
+  void _snackWithUndo(String msg, int added) {
+    final bg  = _day ? kDSnackBg : kNBg;
+    final fg  = _day ? kDFg1     : kN2;
+    final act = _day ? kDFg0     : kN0;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(msg, style: TextStyle(color: fg, fontSize: 13), maxLines: 3),
+        backgroundColor: bg,
+        duration: const Duration(seconds: 8),
+        action: added > 0 ? SnackBarAction(
+          label: 'UNDO',
+          textColor: act,
+          onPressed: () {
+            WaypointService.instance.undoLastImport();
+            setState(() {});
+          },
+        ) : null,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      ));
   }
 
   static String _importSummary(
@@ -135,40 +175,14 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   @override
   Widget build(BuildContext context) {
     final wpts = WaypointService.instance.waypoints;
-    return Scaffold(
+    return PopScope(
+      canPop: !_inSelectMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _inSelectMode) setState(() => _selected.clear());
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: _cTertiary,
-        elevation: 0,
-        title: Text('Waypoints',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _cTertiary)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_location_alt_outlined),
-            tooltip: 'Add waypoint',
-            onPressed: () => _showEditSheet(null),
-          ),
-          IconButton(
-            icon: Icon(Icons.file_download_outlined, color: _cTertiary),
-            tooltip: 'Import GPX',
-            onPressed: _importGpx,
-          ),
-          IconButton(
-            icon: Icon(Icons.file_upload_outlined, color: _cTertiary),
-            tooltip: 'Export GPX',
-            onPressed: _exportGpx,
-          ),
-          IconButton(
-            icon: const Icon(Icons.info_outline),
-            tooltip: 'About & Legal',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => AboutScreen(dayMode: widget.dayMode)),
-            ),
-          ),
-        ],
-      ),
+      appBar: _inSelectMode ? _selectionAppBar(wpts) : _normalAppBar(),
       body: wpts.isEmpty
           ? Center(
               child: Padding(
@@ -195,8 +209,83 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               itemCount: wpts.length,
               itemBuilder: (ctx, i) => _tile(wpts[i], index: i, key: ValueKey(wpts[i].id)),
             ),
-    );
+      ),   // Scaffold
+    );   // WillPopScope
   }
+
+  // ── AppBar variants ───────────────────────────────────────────────────────
+  AppBar _normalAppBar() => AppBar(
+    backgroundColor: Colors.black,
+    foregroundColor: _cTertiary,
+    elevation: 0,
+    title: Text('Waypoints',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _cTertiary)),
+    actions: [
+      IconButton(
+        icon: const Icon(Icons.add_location_alt_outlined),
+        tooltip: 'Add waypoint',
+        onPressed: () => _showEditSheet(null),
+      ),
+      IconButton(
+        icon: Icon(Icons.file_download_outlined, color: _cTertiary),
+        tooltip: 'Import GPX',
+        onPressed: _importGpx,
+      ),
+      IconButton(
+        icon: Icon(Icons.file_upload_outlined, color: _cTertiary),
+        tooltip: 'Export all GPX',
+        onPressed: _exportGpx,
+      ),
+      IconButton(
+        icon: Icon(Icons.checklist_outlined, color: _cTertiary),
+        tooltip: 'Select waypoints',
+        onPressed: () => setState(() => _selected.clear()),
+        // Tapping shows the select-mode AppBar even with 0 selected
+        // so user can see the UI before selecting.
+      ),
+      IconButton(
+        icon: const Icon(Icons.info_outline),
+        tooltip: 'About & Legal',
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => AboutScreen(dayMode: widget.dayMode)),
+        ),
+      ),
+    ],
+  );
+
+  AppBar _selectionAppBar(List<Waypoint> wpts) => AppBar(
+    backgroundColor: Colors.black,
+    elevation: 0,
+    leading: IconButton(
+      icon: Icon(Icons.close, color: _cTertiary),
+      tooltip: 'Clear selection',
+      onPressed: () => setState(() => _selected.clear()),
+    ),
+    title: Text(
+      _selected.isEmpty ? 'Select waypoints' : '${_selected.length} selected',
+      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _cTertiary),
+    ),
+    actions: [
+      IconButton(
+        icon: Icon(Icons.select_all, color: _cTertiary),
+        tooltip: 'Select all',
+        onPressed: () => setState(() {
+          _selected.addAll(wpts.map((w) => w.id));
+        }),
+      ),
+      IconButton(
+        icon: Icon(Icons.file_upload_outlined, color: _cTertiary),
+        tooltip: _selected.isEmpty ? 'Export all GPX' : 'Export selected GPX',
+        onPressed: _exportGpx,
+      ),
+      if (_selected.isNotEmpty) IconButton(
+        icon: Icon(Icons.delete_outline, color: _day ? kDStale : kN1),
+        tooltip: 'Delete selected',
+        onPressed: _deleteSelected,
+      ),
+    ],
+  );
 
   Widget _tile(Waypoint wp, {required int index, Key? key}) {
     final isActive    = WaypointService.instance.activeId == wp.id;
@@ -216,27 +305,48 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
     final locColor = _locColor(widget.locatorType);
 
+    final isSelected   = _selected.contains(wp.id);
+    final isHighlighted = WaypointService.instance.highlightedImportIds.contains(wp.id);
+    final highlightColor = _day ? kDGps : kN0;
     final inkColor = (_day ? kDFg0 : kN2).withValues(alpha: 0.12);
     return DecoratedBox(
       key: key,
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: _day ? kDDiv : kNDiv, width: 1)),
+        color: isSelected ? (_day ? kDFg3.withValues(alpha: 0.12) : kN3.withValues(alpha: 0.18)) : null,
+        border: Border(
+          bottom: BorderSide(color: _day ? kDDiv : kNDiv, width: 1),
+          // Green (day) / bright-red (night) left stripe for freshly imported points.
+          left: isHighlighted
+              ? BorderSide(color: highlightColor, width: 3)
+              : BorderSide.none,
+        ),
       ),
       child: Theme(
       data: Theme.of(context).copyWith(splashColor: inkColor, highlightColor: inkColor),
       child: ListTile(
       tileColor: (isEmergency || isActive) ? kNBg : Colors.transparent,
-      leading: Icon(
-        isEmergency
-            ? Icons.warning_rounded
-            : isActive ? Icons.navigation : Icons.location_on_outlined,
-        color: isEmergency
-            ? kDEmg
-            : isActive
-                ? (_day ? kDNav : kN0)
-                : _cDim,
-        size: 22,
-      ),
+      leading: _inSelectMode
+          ? Checkbox(
+              value: isSelected,
+              onChanged: (_) => setState(() {
+                isSelected ? _selected.remove(wp.id) : _selected.add(wp.id);
+              }),
+              side: BorderSide(color: _cDim),
+              checkColor: Colors.black,
+              fillColor: WidgetStateProperty.resolveWith((s) =>
+                  s.contains(WidgetState.selected)
+                      ? (_day ? kDFg0 : kN1)
+                      : Colors.transparent),
+            )
+          : Icon(
+              isEmergency
+                  ? Icons.warning_rounded
+                  : isActive ? Icons.navigation : Icons.location_on_outlined,
+              color: isEmergency
+                  ? kDEmg
+                  : isActive ? (_day ? kDNav : kN0) : _cDim,
+              size: 22,
+            ),
       title: Text(
         wp.name,
         style: TextStyle(
@@ -265,7 +375,12 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             ),
           ]),
           const SizedBox(height: 2),
-          Text('$latStr   $lonStr',
+          Text(latStr,
+              style: TextStyle(
+                  color: _cSecond,
+                  fontSize: 11,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+          Text(lonStr,
               style: TextStyle(
                   color: _cSecond,
                   fontSize: 11,
@@ -296,18 +411,26 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                     color: _cDistText,
                     fontSize: 14,
                     fontWeight: FontWeight.w600)),
-          const SizedBox(width: 6),
-          ReorderableDragStartListener(
-            index: index,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              child: Icon(Icons.drag_handle, color: _cDim, size: 20),
+          if (!_inSelectMode) ...[
+            const SizedBox(width: 6),
+            ReorderableDragStartListener(
+              index: index,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                child: Icon(Icons.drag_handle, color: _cDim, size: 20),
+              ),
             ),
-          ),
+          ],
         ],
       ),
       onTap: () {
         HapticFeedback.lightImpact();
+        if (_inSelectMode) {
+          setState(() {
+            isSelected ? _selected.remove(wp.id) : _selected.add(wp.id);
+          });
+          return;
+        }
         if (isActive) {
           WaypointService.instance.deactivate();
         } else {
@@ -317,7 +440,13 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       },
       onLongPress: () {
         HapticFeedback.mediumImpact();
-        _showEditSheet(wp);
+        if (_inSelectMode) {
+          setState(() {
+            isSelected ? _selected.remove(wp.id) : _selected.add(wp.id);
+          });
+        } else {
+          _showEditSheet(wp);
+        }
       },
     ),   // ListTile
     ),   // Theme

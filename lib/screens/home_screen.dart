@@ -756,7 +756,34 @@ class _HomeScreenState extends State<HomeScreen>
     }
     final r = WaypointService.instance.importWaypoints(parsed);
     if (mounted) setState(() {});
-    _showSnack(_gpxImportSummary(r, parsed.length));
+    // Show undo action so the user can reverse an accidental open-with import.
+    if (r.added > 0 && mounted) {
+      final bg  = _dayMode ? kDSnackBg : kNBg;
+      final fg  = _dayMode ? kDFg1     : kN2;
+      final act = _dayMode ? kDFg0     : kN0;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+          content: Text(_gpxImportSummary(r, parsed.length),
+              style: TextStyle(color: fg, fontSize: 13), maxLines: 3),
+          backgroundColor: bg,
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(
+            label: 'UNDO',
+            textColor: act,
+            onPressed: () {
+              if (!mounted) return;
+              WaypointService.instance.undoLastImport();
+              setState(() {});
+            },
+          ),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        ));
+    } else {
+      _showSnack(_gpxImportSummary(r, parsed.length));
+    }
   }
 
   static String _gpxImportSummary(
