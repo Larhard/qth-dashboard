@@ -189,30 +189,59 @@ class _HomeScreenState extends State<HomeScreen>
   // Enum shorthand for the three sources.
   static const int _srcMag = 0, _srcTrk = 1, _srcGps = 2;
 
+  // ── Computed source — used for actual heading VALUE and compass-listener logic ──
+  // Falls back to MAG when GPS/TRK data isn't available so the arrow keeps
+  // rotating via the live compass while the user waits for a GPS/TRK signal.
+  int get _computedSourceId {
+    if (_headingSourceMode == HeadingSourceMode.magOnly) return _srcMag;
+    if (_gpsSpeedValid()) return _srcGps;
+    if (_track.bearing != null) return _srcTrk;
+    return _srcMag; // MAG fallback — drives the arrow while waiting
+  }
+
+  // ── Display source — used for LABEL and COLOUR shown to the user ───────────
+  // In auto mode, always shows GPS or TRK (never silently shows MAG).
+  // When no data is available yet it shows TRK, communicating "waiting for signal".
   int get _primarySourceId {
     if (_headingSourceMode == HeadingSourceMode.magOnly) return _srcMag;
     if (_gpsSpeedValid()) return _srcGps;
-    // In auto mode, once TRK is available it stays primary even when stationary —
-    // the last known travel direction is more useful than a magnetic compass.
     if (_track.bearing != null) return _srcTrk;
-    return _srcMag; // only when no TRK data at all (app just started)
+    return _srcTrk; // auto mode, no data yet → display as TRK (waiting)
   }
 
-  // Keep _usingGps for compass listener logic (compass is NOT primary when GPS/TRK is).
-  bool get _usingGps => _primarySourceId != _srcMag;
+  // True when GPS/TRK data is actually available.
+  // Used to decide whether to display a live degree value or "---".
+  bool get _intendedSourceHasData =>
+      _headingSourceMode == HeadingSourceMode.magOnly ||
+      _gpsSpeedValid() ||
+      _track.bearing != null;
 
-  double get _heading => switch (_primarySourceId) {
-    _srcGps => _position?.heading ?? _compassHeading,
-    _srcTrk => _track.bearing ?? _compassHeading,
-    _       => _compassHeading,
-  };
+  // Compass listener uses _computedSourceId: when waiting for TRK/GPS, the
+  // computed source is still MAG (_srcMag), so _usingGps = false and the
+  // compass listener keeps calling setState → arrow rotates live.
+  bool get _usingGps => _computedSourceId != _srcMag;
 
-  // GPS=green (kDGps), TRK=yellow-green (kDTrk), MAG=white (kDFg0).
+  double get _heading {
+    // In auto mode before GPS/TRK data arrives: return 0.0 so the ring and any
+    // primary arrow are frozen (pointing North) rather than silently following
+    // MAG.  The secondary MAG arrow/dash continues to update via ValueListenableBuilder.
+    if (!_intendedSourceHasData && _headingSourceMode == HeadingSourceMode.auto) {
+      return 0.0;
+    }
+    return switch (_computedSourceId) {
+      _srcGps => _position?.heading ?? _compassHeading,
+      _srcTrk => _track.bearing ?? _compassHeading,
+      _       => _compassHeading,
+    };
+  }
+
+  // Colour and label use the DISPLAY source (_primarySourceId).
+  // GPS=green (kDGps), TRK=yellow (kDTrk), MAG=white (kDFg0).
   // Night: all shift to reds with distinct brightness.
   Color get _headingColor => switch (_primarySourceId) {
     _srcGps => _dayMode ? kDGps : kN1,
     _srcTrk => _dayMode ? kDTrk : kN2,
-    _       => _dayMode ? kDFg0 : kN2,  // MAG: kN2 when primary so it stays readable
+    _       => _dayMode ? kDFg0 : kN2,
   };
 
   String get _sourceLabel => switch (_primarySourceId) {
@@ -327,9 +356,8 @@ class _HomeScreenState extends State<HomeScreen>
   void _onStaleTick(Timer _) {
     if (!mounted) return;
     final sec = DateTime.now().difference(_lastGpsFix).inSeconds;
-    // Always rebuild on every tick: the time row needs a fresh DateTime.now()
-    // each second. The cost is one setState per second while the screen is on;
-    // the timer is cancelled when the screen turns off.
+    // Conditional: only rebuilds when the stale counter actually changes.
+    // When GPS is fresh, sec stays 0 → no extra rebuilds beyond GPS updates.
     if (sec != _gpsStaleSeconds) setState(() => _gpsStaleSeconds = sec);
   }
 
@@ -1151,9 +1179,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Heading ───────────────────────────────────────────────────────────────
   Widget _headingSection(Position pos) {
-    final color = _headingColor;
-    final primary = _heading;
-    final markers = _bearingMarkers(pos);
+    final color    = _headingColor;
+    final primary  = _heading;
+    final headingText = _intendedSourceHasData ? '${primary.round()}°' : '---';
+    final markers  = _bearingMarkers(pos);
     final windRose = _headingArrowMode == HeadingArrowMode.windRose;
     return Row(children: [
       GestureDetector(
@@ -1212,7 +1241,7 @@ class _HomeScreenState extends State<HomeScreen>
         GestureDetector(
           onLongPress: _toggleHeadingSourceMode,
           behavior: HitTestBehavior.opaque,
-          child: Text('${primary.round()}°',
+          child: Text(headingText,
               style: TextStyle(
                   fontSize: 64,
                   fontWeight: FontWeight.w900,
@@ -1241,9 +1270,10 @@ class _HomeScreenState extends State<HomeScreen>
   // (e.g. "9°" → "10°" → "359°"). TRK is always rendered so the row height
   // is stable regardless of whether a bearing is available.
   Widget _headingSectionLandscape(Position pos) {
-    final color = _headingColor;
-    final primary = _heading;
-    final markers = _bearingMarkers(pos);
+    final color    = _headingColor;
+    final primary  = _heading;
+    final headingText = _intendedSourceHasData ? '${primary.round()}°' : '---';
+    final markers  = _bearingMarkers(pos);
     final windRose = _headingArrowMode == HeadingArrowMode.windRose;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -1303,7 +1333,7 @@ class _HomeScreenState extends State<HomeScreen>
               behavior: HitTestBehavior.opaque,
               child: SizedBox(
                 width: 120,
-                child: Text('${primary.round()}°',
+                child: Text(headingText,
                     textAlign: TextAlign.start,
                     style: TextStyle(
                         fontSize: 52,
