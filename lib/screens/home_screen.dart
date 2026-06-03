@@ -374,8 +374,9 @@ class _HomeScreenState extends State<HomeScreen>
       }
     } else if (state == AppLifecycleState.resumed) {
       _screenOn = true;
-      // Hide the overlay while the dashboard itself is in front.
-      if (OverlayController.instance.isShown) OverlayController.instance.hide();
+      // Hide the overlay while the dashboard itself is in front (idempotent —
+      // call whenever the feature is enabled, regardless of locally-tracked state).
+      if (OverlayController.instance.enabled) OverlayController.instance.hide();
       _compassSub?.resume();
       _checkPocketLockOnResume();
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
@@ -963,6 +964,18 @@ class _HomeScreenState extends State<HomeScreen>
         ? _compassHeading
         : (_track.bearing ?? _lastValidGpsHeading);
 
+    // Same POI dots as the main bearing ring (city / nav waypoint / MOB).
+    final pos = _position;
+    final markers = pos != null ? _bearingMarkers(pos) : const [];
+    final mB = <double>[]; final mC = <int>[]; final mS = <double>[];
+    for (final m in markers) {
+      mB.add(m.bearingDeg.toDouble());
+      mC.add(m.color.toARGB32());
+      mS.add(m.sizeScale);
+    }
+
+    // Info text: anchor status when anchoring, else nearest city. A nav waypoint
+    // and/or MOB always show as dots on the ring regardless.
     String line1, line2;
     if (anchoring) {
       final a = AnchorService.instance;
@@ -975,11 +988,20 @@ class _HomeScreenState extends State<HomeScreen>
           ? 'GPS lost ${a.gpsLossSeconds}s'
           : '${(a.distanceM ?? 0).round()} m / ${a.radiusM.round()} m';
     } else {
+      final nav = WaypointService.instance.active;
       final nc = _nearestCity;
-      line1 = nc?.city.name ?? '—';
-      line2 = nc != null
-          ? '${nc.bearingDeg.round()}°  ${formatDistanceUnit(nc.distKm, _speedUnit)}'
-          : '';
+      if (nav != null && pos != null) {
+        // A selected waypoint takes priority in the text line.
+        final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
+        final dist = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
+        line1 = '› ${nav.name}';
+        line2 = '${b.round()}°  ${formatDistanceUnit(dist, _speedUnit)}';
+      } else {
+        line1 = nc?.city.name ?? '—';
+        line2 = nc != null
+            ? '${nc.bearingDeg.round()}°  ${formatDistanceUnit(nc.distKm, _speedUnit)}'
+            : '';
+      }
     }
 
     OverlayController.instance.update(
@@ -990,12 +1012,16 @@ class _HomeScreenState extends State<HomeScreen>
       primaryColor: _headingColor,
       secondaryColor: _secondaryHeadingColor,
       northColor: _dayMode ? kDEmg : kN0,
+      ringColor: _dayMode ? kDFg0 : kN2,
       line1: line1,
       line2: line2,
-      bgColor: (_dayMode ? Colors.black : kNBg).withValues(alpha: 0.88),
+      bgColor: (_dayMode ? Colors.black : kNBg).withValues(alpha: 0.92),
       textColor: _dayMode ? kDFg0 : kN1,
       subColor: anchoring ? _anchorLevelColor(AnchorService.instance.level)
                           : (_dayMode ? kDFg2 : kN2),
+      markerBearings: mB,
+      markerColors: mC,
+      markerScales: mS,
     );
   }
 

@@ -87,3 +87,6 @@ scripts/.ports_cache.json
 android/key.properties       # release signing credentials — NEVER commit
 *.jks                        # Java keystores
 *.keystore
+
+# Versioned release APKs from scripts/release
+/dist/

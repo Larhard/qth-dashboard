@@ -6,12 +6,14 @@ import 'package:get_storage/get_storage.dart';
 import 'screens/home_screen.dart';
 import 'services/city_service.dart';
 import 'services/waypoint_service.dart';
+import 'utils/app_info.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   _registerDataLicences();
   await GetStorage.init();
+  await AppInfo.load(); // version from pubspec via package metadata
   WaypointService.instance.load();
   await CityService.instance.load();
   runApp(const QthHelperApp());

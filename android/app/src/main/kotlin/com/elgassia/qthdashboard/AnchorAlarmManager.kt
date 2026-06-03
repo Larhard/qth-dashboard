@@ -63,15 +63,14 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     private val audioManager by lazy { appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    private var loopTrack: AudioTrack? = null      // continuous (alarm/test), speaker
-    private var loopCompanion: AudioTrack? = null  // continuous, external route
+    private var loopTrack: AudioTrack? = null      // the single continuous alarm/test track
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
     // Keep one-shot warning tracks alive until they finish, then release.
     private val oneShotTracks = mutableListOf<AudioTrack>()
-    // Continuous playback uses MODE_STREAM fed by dedicated writer threads —
-    // MODE_STATIC + setLoopPoints glitches/breaks up on many devices.
+    // Continuous playback = MODE_STREAM fed by ONE max-priority synth thread.
+    // (MODE_STATIC + setLoopPoints glitches; two tracks comb-filter on one speaker.)
     @Volatile private var feeding = false
-    private val feederThreads = mutableListOf<Thread>()
+    private var feederThread: Thread? = null
 
     // Alarm focus changes are ignored — an alarm must keep sounding regardless.
     private val focusListener = AudioManager.OnAudioFocusChangeListener { /* no-op */ }
@@ -130,7 +129,7 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         mode = Mode.ALARM
         acquireWakeLock()
         vibrateContinuous()
-        playLooping(alarmBuffer(), maxVolume = true)
+        startAlarmSynth(maxVolume = true, volumeScale = 1.0f)
         handler.postDelayed(flashRunnable, 100L)
     }
 
@@ -139,7 +138,7 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         if (mode == Mode.TEST) { stop(); return }
         stop()
         mode = Mode.TEST
-        playLooping(testBuffer(), maxVolume = false, volumeScale = 0.20f)
+        startAlarmSynth(maxVolume = false, volumeScale = 0.20f)
         vibrateShort()
         // Safety auto-stop after 60 s in case the user forgets.
         handler.postDelayed({ if (mode == Mode.TEST) stop() }, 60_000L)
@@ -176,18 +175,6 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         val env = 1.0 - (t / 0.25)            // linear fade across the 250 ms
         sin(2 * PI * 880.0 * t) * env
     }
-
-    /** Dissonant siren: two tones a tritone (√2) apart, 400→1200 Hz sweep, clipped. */
-    private fun alarmBuffer(): ShortArray = synthesise(2000, 1.0) { t ->
-        val sweep = 0.5 - 0.5 * Math.cos(2 * PI * 0.5 * t)
-        val freq  = 400.0 + 800.0 * sweep
-        val f1 = sin(2 * PI * freq * t)
-        val f2 = sin(2 * PI * freq * 1.4142 * t)
-        (f1 + f2).coerceIn(-0.9, 0.9)
-    }
-
-    /** Test uses the alarm timbre so the crew hears exactly what will fire. */
-    private fun testBuffer(): ShortArray = alarmBuffer()
 
     // ─────────────────────────────────────────────────────────────────────────
     // Audio playback
@@ -228,20 +215,15 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         )
     }
 
-    /** True when headphones / Bluetooth / USB audio output is connected. */
-    private fun hasExternalOutput(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
-        return try {
-            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO  ||
-                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET    ||
-                it.type == AudioDeviceInfo.TYPE_USB_HEADSET
-            }
-        } catch (_: Exception) { false }
-    }
+    private fun forceMaxAlarmVolumeIf(maxVolume: Boolean) { if (maxVolume) forceMaxAlarmVolume() }
 
+    /**
+     * Pin a track to the BUILT-IN SPEAKER regardless of headphone/BT routing.
+     * Safety: the alarm must always sound in the physical space, even if the crew
+     * is wearing headphones (the dangerous case is sound going ONLY to headphones).
+     * A single speaker-pinned track also avoids the comb-filtering / "duplicated"
+     * artefact that two simultaneous tracks on one speaker produce.
+     */
     private fun pinToSpeaker(track: AudioTrack) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
@@ -279,78 +261,67 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
     }
 
     /**
-     * Continuous looping playback (alarm / test) via MODE_STREAM + a high-priority
-     * blocking writer thread.  The blocking write paces production automatically and
-     * keeps the hardware buffer always full — no underruns, no MODE_STATIC loop glitch.
+     * Continuous alarm siren via ON-THE-FLY synthesis (no looping buffer).
+     *
+     * A dedicated max-priority thread generates samples with persistent phase
+     * accumulators, so there is NEVER a loop-boundary discontinuity — the source
+     * of the "breaking up" artefact.  ONE speaker-pinned track only — no companion
+     * — so there is no comb-filtering / "duplicated" sound.
+     *
+     * Timbre: two oscillators a tritone (√2) apart, the fundamental sweeping
+     * 400→1200 Hz at 0.5 Hz, summed and hard-clipped — deliberately harsh.
      */
-    private fun playLooping(pcm: ShortArray, maxVolume: Boolean, volumeScale: Float = 1.0f) {
+    private fun startAlarmSynth(maxVolume: Boolean, volumeScale: Float) {
         stopAudio()
-        if (maxVolume) forceMaxAlarmVolume()
+        forceMaxAlarmVolumeIf(maxVolume)
         requestFocus(exclusive = maxVolume)
         feeding = true
         try {
-            val speaker = newStreamTrack(volumeScale)
-            pinToSpeaker(speaker)
-            speaker.play()
-            loopTrack = speaker
-            feederThreads.add(startFeeder(speaker, pcm))
-
-            // Companion on the default route only when headphones/BT are present.
-            if (hasExternalOutput()) {
-                val ext = newStreamTrack(volumeScale)
-                ext.play()
-                loopCompanion = ext
-                feederThreads.add(startFeeder(ext, pcm))
-            }
+            val track = newStreamTrack(volumeScale)
+            pinToSpeaker(track)
+            track.play()
+            loopTrack = track
+            feederThread = Thread {
+                val twoPi = 2 * Math.PI
+                var phase1 = 0.0
+                var phase2 = 0.0
+                var n = 0L
+                val chunk = ShortArray(2048)
+                try {
+                    while (feeding) {
+                        for (i in chunk.indices) {
+                            val t = n / sampleRate.toDouble()
+                            val sweep = 0.5 - 0.5 * Math.cos(twoPi * 0.5 * t) // 0..1 @ 0.5 Hz
+                            val f1 = 400.0 + 800.0 * sweep
+                            phase1 += twoPi * f1 / sampleRate
+                            phase2 += twoPi * (f1 * 1.4142) / sampleRate
+                            if (phase1 > twoPi) phase1 -= twoPi
+                            if (phase2 > twoPi) phase2 -= twoPi
+                            var s = Math.sin(phase1) + Math.sin(phase2)
+                            if (s > 0.9) s = 0.9 else if (s < -0.9) s = -0.9
+                            chunk[i] = (s * Short.MAX_VALUE).toInt().toShort()
+                            n++
+                        }
+                        if (track.write(chunk, 0, chunk.size) < 0) break // blocking
+                    }
+                } catch (_: Exception) {}
+            }.apply { isDaemon = true; priority = Thread.MAX_PRIORITY; start() }
         } catch (_: Exception) {}
     }
 
-    /** Feeds [pcm] to [track] repeatedly until [feeding] is cleared. */
-    private fun startFeeder(track: AudioTrack, pcm: ShortArray): Thread {
-        val t = Thread {
-            try {
-                while (feeding) {
-                    var off = 0
-                    while (off < pcm.size && feeding) {
-                        val n = track.write(pcm, off, pcm.size - off) // blocking
-                        if (n < 0) return@Thread       // unrecoverable error
-                        if (n == 0) break               // track stopped → recheck feeding
-                        off += n
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-        t.isDaemon = true
-        t.priority = Thread.MAX_PRIORITY
-        t.start()
-        return t
-    }
-
-    /** One-shot playback (warning ping) — MODE_STREAM, one buffer, auto-released. */
+    /** One-shot playback (warning ping) — single speaker-pinned track, auto-released. */
     private fun playOnce(pcm: ShortArray) {
         forceMaxAlarmVolume()
         requestFocus(exclusive = false)
         val durationMs = (pcm.size.toLong() * 1000L / sampleRate) + 250L
-        fun fireOneShot() {
-            try {
-                val track = newStreamTrack(1.0f)
-                pinToSpeaker(track)
-                track.play()
-                track.write(pcm, 0, pcm.size)  // blocking; buffer plays out
-                oneShotTracks.add(track)
-                handler.postDelayed({ releaseOneShot(track) }, durationMs)
-            } catch (_: Exception) {}
-        }
-        fireOneShot()
-        if (hasExternalOutput()) {
-            try {
-                val ext = newStreamTrack(1.0f)
-                ext.play()
-                ext.write(pcm, 0, pcm.size)
-                oneShotTracks.add(ext)
-                handler.postDelayed({ releaseOneShot(ext) }, durationMs)
-            } catch (_: Exception) {}
-        }
+        try {
+            val track = newStreamTrack(1.0f)
+            pinToSpeaker(track)
+            track.play()
+            track.write(pcm, 0, pcm.size)  // blocking; buffer plays out
+            oneShotTracks.add(track)
+            handler.postDelayed({ releaseOneShot(track) }, durationMs)
+        } catch (_: Exception) {}
     }
 
     private fun releaseOneShot(track: AudioTrack) {
@@ -360,15 +331,12 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
 
     private fun stopAudio() {
         feeding = false
-        // Stopping a track unblocks any feeder thread parked in write().
-        try { loopTrack?.stop() }     catch (_: Exception) {}
-        try { loopCompanion?.stop() } catch (_: Exception) {}
-        for (t in feederThreads) { try { t.join(200) } catch (_: Exception) {} }
-        feederThreads.clear()
-        try { loopTrack?.release() }     catch (_: Exception) {}
-        try { loopCompanion?.release() } catch (_: Exception) {}
+        // Stopping the track unblocks the feeder thread parked in write().
+        try { loopTrack?.stop() } catch (_: Exception) {}
+        try { feederThread?.join(200) } catch (_: Exception) {}
+        feederThread = null
+        try { loopTrack?.release() } catch (_: Exception) {}
         loopTrack = null
-        loopCompanion = null
         for (t in oneShotTracks.toList()) { try { t.stop(); t.release() } catch (_: Exception) {} }
         oneShotTracks.clear()
         abandonFocus()

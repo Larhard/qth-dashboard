@@ -143,8 +143,9 @@ class OverlayService : Service() {
     fun update(
         heading: Double, headingValid: Boolean, windRose: Boolean,
         secondaryBearing: Double?, primaryColor: Long, secondaryColor: Long,
-        northColor: Long, line1: String, line2: String,
+        northColor: Long, ringColor: Long, line1: String, line2: String,
         bgColor: Long, textColor: Long, subColor: Long,
+        markerBearings: DoubleArray, markerColors: IntArray, markerScales: DoubleArray,
     ) {
         val v = view ?: return
         v.heading = heading.toFloat()
@@ -154,11 +155,15 @@ class OverlayService : Service() {
         v.primaryColor = primaryColor.toInt()
         v.secondaryColor = secondaryColor.toInt()
         v.northColor = northColor.toInt()
+        v.ringColor = ringColor.toInt()
         v.line1 = line1
         v.line2 = line2
         v.bgColor = bgColor.toInt()
         v.textColor = textColor.toInt()
         v.subColor = subColor.toInt()
+        v.markerBearings = markerBearings
+        v.markerColors = markerColors
+        v.markerScales = markerScales
         v.applyData()
     }
 

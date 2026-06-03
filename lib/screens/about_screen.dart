@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/units.dart';
+import '../utils/app_info.dart';
 
 /// About / Legal screen.
 ///
@@ -55,7 +56,7 @@ class AboutScreen extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   color: _cPrimary)),
           const SizedBox(height: 4),
-          Text('v1.1.1',
+          Text(AppInfo.display,
               style: TextStyle(fontSize: 13, color: _cDim)),
           const SizedBox(height: 12),
           _disclaimer(),
@@ -182,9 +183,9 @@ class AboutScreen extends StatelessWidget {
                     ),
                     iconTheme: IconThemeData(color: dimColor),
                   ),
-                  child: const LicensePage(
+                  child: LicensePage(
                     applicationName: 'QTH Dashboard',
-                    applicationVersion: 'v1.1.1',
+                    applicationVersion: AppInfo.short,
                     applicationLegalese:
                         '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
                         'City data © GeoNames (CC BY 4.0)\n'

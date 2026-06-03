@@ -392,6 +392,12 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         result.success(null)
                     }
                     "update" -> {
+                        val mb = (call.argument<List<Number>>("markerBearings") ?: emptyList())
+                            .map { it.toDouble() }.toDoubleArray()
+                        val mc = (call.argument<List<Number>>("markerColors") ?: emptyList())
+                            .map { it.toLong().toInt() }.toIntArray()
+                        val ms = (call.argument<List<Number>>("markerScales") ?: emptyList())
+                            .map { it.toDouble() }.toDoubleArray()
                         OverlayService.instance?.update(
                             heading          = call.argument<Double>("heading") ?: 0.0,
                             headingValid     = call.argument<Boolean>("headingValid") ?: true,
@@ -400,11 +406,15 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             primaryColor     = (call.argument<Number>("primaryColor")   ?: 0).toLong(),
                             secondaryColor   = (call.argument<Number>("secondaryColor") ?: 0).toLong(),
                             northColor       = (call.argument<Number>("northColor")     ?: 0).toLong(),
+                            ringColor        = (call.argument<Number>("ringColor")      ?: 0).toLong(),
                             line1            = call.argument<String>("line1") ?: "",
                             line2            = call.argument<String>("line2") ?: "",
                             bgColor          = (call.argument<Number>("bgColor")   ?: 0).toLong(),
                             textColor        = (call.argument<Number>("textColor") ?: 0).toLong(),
                             subColor         = (call.argument<Number>("subColor")  ?: 0).toLong(),
+                            markerBearings   = mb,
+                            markerColors     = mc,
+                            markerScales     = ms,
                         )
                         result.success(null)
                     }

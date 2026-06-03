@@ -227,6 +227,44 @@ flutter install   # transfer and install directly over USB
 
 ---
 
+### Versioning & releases
+
+The version lives in **one place** — the `version: X.Y.Z+B` line of
+`pubspec.yaml`. Everything else derives from it automatically:
+
+- Android `versionName` / `versionCode` (via `flutter.versionName` / `versionCode`).
+- The in-app **About** screen and licence page (read at runtime through
+  `package_info_plus` → `AppInfo`, so they can never go stale).
+
+`X.Y.Z` is semantic (major.minor.patch); `B` is the Android build number /
+`versionCode`, which **must strictly increase** for every installed build.
+
+**Bump the version** (any bump also increments `B`):
+
+```powershell
+.\scripts\bump.ps1 patch    # 1.2.3+7 -> 1.2.4+8   (also: major | minor | build)
+```
+```bash
+./scripts/bump.sh patch     # Linux / macOS
+```
+
+**Cut a release** — bumps, builds a release APK, and writes a version-stamped
+copy to `dist/`:
+
+```powershell
+.\scripts\release.ps1 patch   # default part is "build"
+# → dist\qth_dashboard-v1.2.4+8.apk
+```
+```bash
+./scripts/release.sh patch    # Linux / macOS
+```
+
+The build number is bumped by the explicit `release` command (not automatically
+on every `flutter build`), so debug/hot-reload builds never churn the version and
+each release gets a unique, monotonically-increasing `versionCode`.
+
+---
+
 ### Download full city data (optional, ~10 MB)
 
 The setup script ships with only the top-5 000 cities. For the Precise and

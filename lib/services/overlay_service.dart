@@ -52,11 +52,15 @@ class OverlayController {
     required Color primaryColor,
     required Color secondaryColor,
     required Color northColor,
+    required Color ringColor,
     required String line1,
     required String line2,
     required Color bgColor,
     required Color textColor,
     required Color subColor,
+    List<double> markerBearings = const [],
+    List<int> markerColors = const [],
+    List<double> markerScales = const [],
   }) {
     if (!_shown) return;
     _ch.invokeMethod('update', {
@@ -67,11 +71,15 @@ class OverlayController {
       'primaryColor': primaryColor.toARGB32(),
       'secondaryColor': secondaryColor.toARGB32(),
       'northColor': northColor.toARGB32(),
+      'ringColor': ringColor.toARGB32(),
       'line1': line1,
       'line2': line2,
       'bgColor': bgColor.toARGB32(),
       'textColor': textColor.toARGB32(),
       'subColor': subColor.toARGB32(),
+      'markerBearings': markerBearings,
+      'markerColors': markerColors,
+      'markerScales': markerScales,
     }).catchError((_) {});
   }
 }

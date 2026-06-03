@@ -1,7 +1,7 @@
 name: qth_dashboard
 description: GPS navigation dashboard — heading, coordinates, IARU/MGRS locator, city finder, waypoints.
 publish_to: 'none'
-version: 1.1.1+1
+version: 1.1.1+4
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -17,6 +17,7 @@ dependencies:
   # file picking handled via MethodChannel in MainActivity.kt (no extra package needed)
   path_provider: ^2.1.5 # temp directory for GPX file staging
   xml: ^6.5.0           # proper XML parsing for GPX import/export
+  package_info_plus: ^8.0.0  # app version/build for About screen (single source: pubspec)
 
 dev_dependencies:
   flutter_test:

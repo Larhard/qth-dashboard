@@ -64,12 +64,18 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   void initState() {
     super.initState();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+    // This is a settings-style screen (not glanced at while driving), so show the
+    // system bars — otherwise immersive mode hides the status bar and the AppBar
+    // back arrow can sit under a display cutout.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
     WaypointService.instance.clearImportHighlights();
+    // Restore the dashboard's immersive (full-screen) mode on the way out.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     super.dispose();
   }
 
@@ -299,42 +305,51 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         ),
       ),
       IconButton(
-        icon: Icon(Icons.file_download_outlined, color: _cTertiary),
-        tooltip: 'Import GPX',
-        onPressed: _importGpx,
-      ),
-      IconButton(
-        icon: Icon(Icons.file_upload_outlined, color: _cTertiary),
-        tooltip: 'Export all GPX',
-        onPressed: _exportGpx,
-      ),
-      IconButton(
-        icon: Icon(
-          OverlayController.instance.enabled
-              ? Icons.picture_in_picture_alt
-              : Icons.picture_in_picture_alt_outlined,
-          color: OverlayController.instance.enabled
-              ? (_day ? kDPort : kN1)
-              : _cTertiary,
-        ),
-        tooltip: 'Floating compass overlay',
-        onPressed: _toggleOverlay,
-      ),
-      IconButton(
         icon: Icon(Icons.checklist_outlined, color: _cTertiary),
         tooltip: 'Select waypoints',
         onPressed: () => setState(() => _selectModeActive = true),
       ),
-      IconButton(
-        icon: const Icon(Icons.info_outline),
-        tooltip: 'About & Legal',
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => AboutScreen(dayMode: widget.dayMode)),
-        ),
-      ),
+      // Less-frequent actions live in an overflow menu to keep the bar uncluttered.
+      _overflowMenu(),
     ],
   );
+
+  Widget _overflowMenu() {
+    final overlayOn = OverlayController.instance.enabled;
+    PopupMenuItem<String> item(String value, IconData icon, String label, {Color? color}) =>
+        PopupMenuItem<String>(
+          value: value,
+          child: Row(children: [
+            Icon(icon, size: 18, color: color ?? (_day ? kDFg2 : kN2)),
+            const SizedBox(width: 12),
+            Text(label, style: TextStyle(color: color ?? (_day ? kDFg1 : kN2))),
+          ]),
+        );
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, color: _cTertiary),
+      tooltip: 'More',
+      color: _day ? kDSheetBg : kNSheet,
+      onSelected: (v) {
+        switch (v) {
+          case 'import': _importGpx();
+          case 'export': _exportGpx();
+          case 'overlay': _toggleOverlay();
+          case 'about':
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => AboutScreen(dayMode: widget.dayMode)));
+        }
+      },
+      itemBuilder: (_) => [
+        item('import', Icons.file_download_outlined, 'Import GPX'),
+        item('export', Icons.file_upload_outlined, 'Export all GPX'),
+        item('overlay',
+            overlayOn ? Icons.picture_in_picture_alt : Icons.picture_in_picture_alt_outlined,
+            overlayOn ? 'Floating compass: ON' : 'Floating compass',
+            color: overlayOn ? (_day ? kDPort : kN1) : null),
+        item('about', Icons.info_outline, 'About & Legal'),
+      ],
+    );
+  }
 
   AppBar _selectionAppBar(List<Waypoint> wpts) => AppBar(
     backgroundColor: Colors.black,
