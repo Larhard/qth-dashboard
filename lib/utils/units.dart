@@ -2,17 +2,18 @@ import 'package:flutter/material.dart' show Color;
 import 'package:get_storage/get_storage.dart';
 
 // ── Night-mode colour palette ─────────────────────────────────────────────
-// All entries share hue ≈ 0° (pure red family).  Vary only in lightness so
-// every dark-mode screen has a cohesive, easily-distinguished palette.
-// Use these constants in every screen instead of raw Color literals so that
-// a single edit here updates the whole app.
-const kN0    = Color(0xFFFF3333); // brightest  — emergency / destructive
-const kN1    = Color(0xFFCC1111); // primary    — main text, active icons
-const kN2    = Color(0xFF9A1111); // secondary  — labels, sub-icons
-const kN3    = Color(0xFF771111); // tertiary   — metadata, captions
-const kN4    = Color(0xFF4A1111); // very dim   — hints, disabled
+// STRICT RULE: every night-mode colour is PURE RED — green and blue channels
+// are exactly 0x00.  All values lie on the line #000000 → #FF0000.  This is the
+// only way to fully preserve night-adapted (rod) vision: any green or blue light
+// destroys dark adaptation.  Vary ONLY the red channel for the lightness ramp.
+// Use these constants everywhere in dark mode; never a raw colour literal.
+const kN0    = Color(0xFFFF0000); // brightest  — emergency / destructive
+const kN1    = Color(0xFFCC0000); // primary    — main text, active icons
+const kN2    = Color(0xFF9A0000); // secondary  — labels, sub-icons
+const kN3    = Color(0xFF770000); // tertiary   — metadata, captions
+const kN4    = Color(0xFF4A0000); // very dim   — hints, disabled
 const kNBg   = Color(0xFF1A0000); // tile / card background
-const kNDiv  = Color(0xFF250505); // dividers, borders
+const kNDiv  = Color(0xFF250000); // dividers, borders
 const kNSheet= Color(0xFF0A0000); // modal / bottom-sheet background
 
 // ── Day-mode colour palette ───────────────────────────────────────────────
@@ -75,10 +76,10 @@ const kDGpsM4  = Color(0xFF80CBC4); // 4-char Maidenhead (field)
 // Emergency card border ring — shown during hold-to-clear animation
 const kDEmgRing    = Color(0xFF4A1515); // day: active progress ring
 const kDEmgRingDim = Color(0xFF3D1212); // day: idle ring
-const kNEmgRing    = Color(0xFF2A0A0A); // night: active progress ring
-const kNEmgRingDim = Color(0xFF1A0808); // night: idle ring
+const kNEmgRing    = Color(0xFF2A0000); // night: active progress ring (pure red)
+const kNEmgRingDim = Color(0xFF1A0000); // night: idle ring (pure red)
 const kDEmgArc     = Color(0xFFFF6666); // day: arc animation end colour
-const kNEmgArc     = Color(0xFFAA3333); // night: arc animation end colour
+const kNEmgArc     = Color(0xFFAA0000); // night: arc animation end colour (pure red)
 
 enum SpeedUnit { metric, nautical, imperial }
 

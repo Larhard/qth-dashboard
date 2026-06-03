@@ -181,30 +181,43 @@ the codebase.** All colours are referenced by their semantic constant name.
 
 This ensures that:
 - A single edit to one constant propagates to every screen instantly.
-- Night mode is provably grey-free — all night constants share hue ≈ 0° (pure red).
+- Night mode is provably pure-red (see the strict rule below).
 - Day mode has semantic meaning (green = GPS, amber = MGRS, cyan = port, etc.).
 
-### Night palette (`kN*`) — pure red family
+### Night palette (`kN*`) — STRICT PURE RED
 
-All night constants share H ≈ 0° (pure red). Brightness is the only axis.
+**HARD RULE: every night-mode colour has green = `0x00` and blue = `0x00`.**
+All night values lie exactly on the line `#000000` → `#FF0000`; only the red
+channel varies. This is non-negotiable — any green or blue light destroys rod
+(night-adapted) vision, which is the entire point of night mode for marine and
+field use. A night colour of the form `#RRGGBB` is a bug unless `GG == 00` and
+`BB == 00`.
 
 | Constant | Value | Semantic role |
 |---|---|---|
-| `kN0` | `#FF3333` | Emergency / North indicator arc / brightest accent |
-| `kN1` | `#CC1111` | Primary text, active icon |
-| `kN2` | `#9A1111` | Secondary text, sub-label |
-| `kN3` | `#771111` | Metadata, captions |
-| `kN4` | `#4A1111` | Hints, disabled, very dim |
+| `kN0` | `#FF0000` | Emergency / North indicator arc / brightest accent |
+| `kN1` | `#CC0000` | Primary text, active icon |
+| `kN2` | `#9A0000` | Secondary text, sub-label |
+| `kN3` | `#770000` | Metadata, captions |
+| `kN4` | `#4A0000` | Hints, disabled, very dim |
 | `kNBg` | `#1A0000` | Tile / card background |
-| `kNDiv` | `#250505` | Dividers, borders |
+| `kNDiv` | `#250000` | Dividers, borders |
 | `kNSheet` | `#0A0000` | Modal / bottom-sheet background |
+| `kNEmgRing` / `kNEmgRingDim` / `kNEmgArc` | `#2A0000` / `#1A0000` / `#AA0000` | Hold-to-clear ring animation |
 
 **Night mode rules:**
-- No white, grey, blue, green, amber, or cyan.
-- No splash/highlight/tooltip in any non-red colour.
-- Screen strobe during anchor alarm alternates black ↔ red (`kN0`).
-- Snackbars: `kNBg` background, `kN2` text.
-- Tooltips: `kNBg` background, `kN1` text.
+- No white, grey, blue, green, amber, cyan — **and no desaturated red** (no
+  `#FFxxyy` with non-zero green/blue). Pure red channel only.
+- This applies to EVERYTHING in dark mode: text, icons, borders, backgrounds,
+  splashes/highlights, tooltips, snackbars, **slider tracks AND tick marks**,
+  tab-bar overlays, progress rings, the strobe overlay, and any `CustomPainter`.
+- Widgets with framework default colours (Slider tick marks, ripples, dividers,
+  Material surface tints) MUST have their night colours pinned to `kN*` — the
+  Material defaults are grey and will leak through otherwise.
+- `Colors.black` and `Colors.transparent` are the only non-`kN*` values allowed
+  in night mode (both are within the rule).
+- Screen strobe during anchor alarm alternates black ↔ `kN0`.
+- Snackbars: `kNBg` background, `kN2` text. Tooltips: `kNBg` background, `kN1` text.
 
 ### Day palette (`kD*`) — semantic colours
 

@@ -756,7 +756,8 @@ class _TrackBufferCanvas extends StatelessWidget {
       width: 200,
       height: 160,
       decoration: BoxDecoration(
-        color: const Color(0xFF0A0A0A),
+        // Pure black in night mode (no grey tint), near-black in day.
+        color: dayMode ? const Color(0xFF0A0A0A) : Colors.black,
         border: Border.all(color: dayMode ? kDDiv : kNDiv),
         borderRadius: BorderRadius.circular(4),
       ),

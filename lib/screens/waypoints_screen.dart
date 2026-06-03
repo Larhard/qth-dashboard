@@ -554,9 +554,15 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               ]),
               SliderTheme(
                 data: SliderTheme.of(ctx).copyWith(
-                  activeTrackColor: _day ? kDPort  : kN1,
-                  thumbColor:       _day ? kDPort  : kN0,
-                  inactiveTrackColor: _day ? kDDiv : kNDiv,
+                  activeTrackColor:     _day ? kDPort : kN1,
+                  thumbColor:           _day ? kDPort : kN0,
+                  inactiveTrackColor:   _day ? kDDiv  : kNDiv,
+                  // Tick marks default to grey in dark themes — pin them to the
+                  // palette so night mode stays pure black/red.
+                  activeTickMarkColor:   _day ? kDPortL : kN0,
+                  inactiveTickMarkColor: _day ? kDBrd   : kNDiv,
+                  overlayColor: (_day ? kDPort : kN1).withValues(alpha: 0.18),
+                  valueIndicatorColor: _day ? kDPort : kNBg,
                 ),
                 child: Slider(
                   value: radius.clamp(10.0, 1000.0),
@@ -583,9 +589,13 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               ]),
               SliderTheme(
                 data: SliderTheme.of(ctx).copyWith(
-                  activeTrackColor: _day ? kDStale : kN2,
-                  thumbColor:       _day ? kDStale : kN1,
-                  inactiveTrackColor: _day ? kDDiv : kNDiv,
+                  activeTrackColor:     _day ? kDStale : kN2,
+                  thumbColor:           _day ? kDStale : kN1,
+                  inactiveTrackColor:   _day ? kDDiv   : kNDiv,
+                  activeTickMarkColor:   _day ? kDAmbs : kN1,
+                  inactiveTickMarkColor: _day ? kDBrd  : kNDiv,
+                  overlayColor: (_day ? kDStale : kN1).withValues(alpha: 0.18),
+                  valueIndicatorColor: _day ? kDStale : kNBg,
                 ),
                 child: Slider(
                   value: warnFrac.clamp(0.5, 0.95),
