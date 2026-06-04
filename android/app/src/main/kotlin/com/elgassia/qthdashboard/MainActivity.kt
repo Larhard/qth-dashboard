@@ -344,6 +344,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                     }
                     "getAnchorSnapshot"   -> result.success(AnchorController.snapshot())
                     "muteAnchor"          -> { AnchorController.mute(); result.success(null) }
+                    "isCharging"          -> result.success(isCharging())
                     "forwardPosition"     -> {
                         // Foreground forwards its (reliable, fused) fixes so the
                         // GPS-loss timer is reset by the most reliable source.

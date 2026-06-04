@@ -10,7 +10,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.location.GnssStatus
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.BatteryManager
@@ -152,35 +151,23 @@ class AnchorMonitorService : Service() {
     private fun startGps() {
         locManager = getSystemService(LOCATION_SERVICE) as LocationManager
         try {
-            // GPS only at 1 Hz / 0 m: a stationary receiver keeps delivering the same
-            // fix.  We deliberately do NOT request NETWORK_PROVIDER — its coarse fixes
-            // would only add noise; the controller rejects them for distance anyway.
+            // GPS only at 1 Hz / 0 m: a stationary receiver keeps delivering fixes
+            // (GPS noise guarantees a new fix each epoch), which is exactly what keeps
+            // the controller's liveness timer reset so a still boat never false-alarms.
+            // We deliberately do NOT request NETWORK_PROVIDER — its coarse fixes would
+            // only add noise.
             locManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1_000L, 0f, locationListener)
         } catch (_: Exception) {}
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try { locManager?.registerGnssStatusCallback(gnssCallback, handler) } catch (_: Exception) {}
-        }
     }
 
     private fun stopGps() {
         try { locManager?.removeUpdates(locationListener) } catch (_: Exception) {}
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try { locManager?.unregisterGnssStatusCallback(gnssCallback) } catch (_: Exception) {}
-        }
         locManager = null
     }
 
     private val locationListener = LocationListener { loc ->
         val acc = if (loc.hasAccuracy()) loc.accuracy.toDouble() else -1.0
         AnchorController.onPosition(loc.latitude, loc.longitude, acc)
-    }
-
-    private val gnssCallback = object : GnssStatus.Callback() {
-        override fun onSatelliteStatusChanged(status: GnssStatus) {
-            var used = 0
-            for (i in 0 until status.satelliteCount) if (status.usedInFix(i)) used++
-            AnchorController.onGnss(used)
-        }
     }
 
     // ── Battery (native — works even when the app is closed) ─────────────────────

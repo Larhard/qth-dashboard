@@ -75,6 +75,12 @@ class _HomeScreenState extends State<HomeScreen>
   DateTime _lastGpsFix = DateTime.now();
   int _gpsStaleSeconds = 0; // 0 = fresh; > 0 = seconds since last fix
 
+  // Charger state, used ONLY to pick the navigation GPS profile (power priority
+  // off-charger).  Defaults to true (responsive) until the first native query.
+  // The anchor GPS is unaffected — it always runs at full robustness.
+  bool _charging = true;
+  int _powerTick = 0; // counts stale-ticks for the periodic charging re-check
+
   // True while the screen is on (resumed lifecycle). Used to skip wasted
   // display work and city lookups when the GPS fires in LIVE mode background.
   bool _screenOn = true;
@@ -389,6 +395,7 @@ class _HomeScreenState extends State<HomeScreen>
       _checkPocketLockOnResume();
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
       _startPositionStream();
+      _refreshChargingProfile(); // adapt nav GPS to charger state on each resume
       _requestImmediateGpsFix();
       _checkPendingGpx(); // handle files opened from other apps
       // Immediately sync the anchor snapshot so the alarm overlay / silence
@@ -429,6 +436,10 @@ class _HomeScreenState extends State<HomeScreen>
     // Keep the floating overlay fresh (cheap; only when shown).
     _pushOverlay();
 
+    // Re-check the charger state every ~30 s so the nav power profile adapts even
+    // during a long screen-on session (e.g. the user plugs in mid-drive).
+    if (++_powerTick % 30 == 0) _refreshChargingProfile();
+
     // Anchor-only work (zero overhead when not anchoring).
     if (AnchorService.instance.isActive) {
       // Poll the native authority for the live alarm snapshot (drives the card
@@ -458,6 +469,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     _startPositionStream();
+    _refreshChargingProfile(); // pick the right nav power profile at startup
 
     _compassSub = FlutterCompass.events?.listen((e) {
       final h = e.heading;
@@ -540,21 +552,28 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  // Builds the Geolocator settings for the current mode.
+  //   • Anchoring → always full robustness: distanceFilter=0 + 3 s interval so a
+  //     stationary boat keeps delivering fixes (never charging-dependent).
+  //   • Navigating → power-aware: economical off-charger, responsive when charging.
+  //     (It is fine for navigation to look "stale"/lost when stationary — the user
+  //      is aware the vehicle isn't moving; power is the priority here.)
+  AndroidSettings _locationSettings({ForegroundNotificationConfig? fg}) {
+    final anchoring = AnchorService.instance.isActive;
+    return AndroidSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: anchoring ? 0 : (_charging ? 2 : 8),
+      intervalDuration: anchoring
+          ? const Duration(seconds: 3)
+          : (_charging ? const Duration(seconds: 8) : const Duration(seconds: 20)),
+      foregroundNotificationConfig: fg,
+    );
+  }
+
   void _startPositionStream() {
     _posSub?.cancel();
-    final anchoring = AnchorService.instance.isActive;
-    // When anchoring: distanceFilter=0 + intervalDuration=3 s forces GPS updates
-    // even when stationary — prevents false "GPS lost" anchor alarms.
-    // When not anchoring: standard settings preserve battery.
-    _posSub = Geolocator.getPositionStream(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: anchoring ? 0 : 2,
-        intervalDuration: anchoring
-            ? const Duration(seconds: 3)
-            : const Duration(seconds: 10),
-      ),
-    ).listen(_onPositionUpdate, onError: (_) {});
+    _posSub = Geolocator.getPositionStream(locationSettings: _locationSettings())
+        .listen(_onPositionUpdate, onError: (_) {});
   }
 
   // Foreground-service-backed stream for LIVE mode while the screen is off.
@@ -565,21 +584,29 @@ class _HomeScreenState extends State<HomeScreen>
   // type are exempt from ACCESS_BACKGROUND_LOCATION.
   void _startPositionStreamBackground() {
     _posSub?.cancel();
-    final anchoring = AnchorService.instance.isActive;
     _posSub = Geolocator.getPositionStream(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: anchoring ? 0 : 2,
-        intervalDuration: anchoring
-            ? const Duration(seconds: 3)
-            : const Duration(seconds: 10),
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
+      locationSettings: _locationSettings(
+        fg: const ForegroundNotificationConfig(
           notificationTitle: 'QTH Helper',
           notificationText: 'GPS tracking active',
           enableWakeLock: true,
         ),
       ),
     ).listen(_onPositionUpdate, onError: (_) {});
+  }
+
+  /// Query the charger state and, if it changed while navigating, restart the
+  /// foreground stream so the new power profile takes effect.  Cheap; the anchor
+  /// stream is intentionally unaffected.
+  Future<void> _refreshChargingProfile() async {
+    bool charging;
+    try {
+      charging = await _anchorAlarmChannel.invokeMethod<bool>('isCharging') ?? _charging;
+    } catch (_) { return; }
+    if (!mounted || charging == _charging) return;
+    _charging = charging;
+    // Only the navigating foreground stream depends on charger state.
+    if (_screenOn && !AnchorService.instance.isActive) _startPositionStream();
   }
 
   // ── Track azimuth ─────────────────────────────────────────────────────────
