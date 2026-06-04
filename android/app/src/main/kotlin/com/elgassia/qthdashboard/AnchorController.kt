@@ -65,6 +65,10 @@ object AnchorController {
     private const val GPS_ALARM_S = 180
     private const val BATT_WARN_PCT = 20
     private const val BATT_ALARM_PCT = 7
+    // Accuracy gate: a fix must be at least this accurate to count for distance.
+    // Cleanly separates GPS (≈5–20 m) from coarse NETWORK fixes (≥50 m).
+    private const val GATE_MIN_M = 12.0
+    private const val GATE_MAX_M = 30.0
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -104,14 +108,19 @@ object AnchorController {
 
     /**
      * A GPS fix.  [accuracyM] = horizontal accuracy in metres (<0 if unknown).
-     * Any fix resets the loss timer (liveness); only an ACCURATE fix moves the
-     * anchor distance (a coarse NETWORK fix would otherwise false-alarm).
+     *
+     * Only a PRECISE fix is used: it moves the anchor distance AND resets the
+     * liveness timer.  The gate is capped at [GATE_MAX_M] so a coarse fix
+     * (typically ≥50 m) can never move the distance — not even for a large radius —
+     * while every genuine GPS fix (≈5–20 m) is accepted.  A coarse fix is ignored
+     * entirely, so it can neither corrupt the distance nor mask a real GPS loss.
      */
     fun onPosition(lat: Double, lon: Double, accuracyM: Double = -1.0) {
         if (!active) return
-        lastFixElapsed = SystemClock.elapsedRealtime()
-        val gate = max(15.0, radiusM * 0.5)
-        if (accuracyM < 0 || accuracyM <= gate) {
+        val gate = (radiusM * 0.25).coerceIn(GATE_MIN_M, GATE_MAX_M)
+        val precise = accuracyM < 0 || accuracyM <= gate
+        if (precise) {
+            lastFixElapsed = SystemClock.elapsedRealtime()   // liveness from good fixes only
             val d = FloatArray(2)
             Location.distanceBetween(lat, lon, this.lat, this.lon, d)
             distanceM = d[0].toDouble()

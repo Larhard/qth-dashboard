@@ -151,11 +151,10 @@ class AnchorMonitorService : Service() {
     private fun startGps() {
         locManager = getSystemService(LOCATION_SERVICE) as LocationManager
         try {
-            // 1 Hz / 0 m: a stationary receiver keeps delivering the same fix.
+            // GPS only at 1 Hz / 0 m: a stationary receiver keeps delivering the same
+            // fix.  We deliberately do NOT request NETWORK_PROVIDER — its coarse fixes
+            // would only add noise; the controller rejects them for distance anyway.
             locManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1_000L, 0f, locationListener)
-        } catch (_: Exception) {}
-        try {
-            locManager?.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1_000L, 0f, locationListener)
         } catch (_: Exception) {}
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { locManager?.registerGnssStatusCallback(gnssCallback, handler) } catch (_: Exception) {}
