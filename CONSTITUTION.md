@@ -436,6 +436,24 @@ rule of thumb:
 
 Never inline a magic number for a tunable value; reference the named constant.
 
+**`config/` vs `settings/` — two different kinds of value, deliberately split:**
+
+| | `lib/config/` | `lib/settings/` |
+|---|---|---|
+| What | Developer tuning constants | User-facing preferences |
+| Who changes it | A developer, in code | The end user, in the app |
+| When | Compile time (rebuild to change) | Runtime |
+| Persisted? | No — it's source | Yes — via `GetStorage` |
+| Example | GPS interval, alarm debounce | speed unit, coordinate format, day/night |
+
+They are separate because they have different audiences, lifecycles, and storage.
+Mixing them would put "things only a developer edits" next to "things the user
+toggles," which is the low-cohesion grouping the layering rules exist to prevent.
+The split also makes adding code intuitive: a new threshold goes to `config/`, a
+new user toggle goes to `settings/` — no judgement call. (Unit *types* such as
+`SpeedUnit` stay with their domain in `utils/formatting.dart`; `settings/` holds
+the user's persisted *choice* of display modes.)
+
 ### 5.10 Cross-language constants must be guarded, not trusted
 
 Dart and Kotlin cannot share a compile-time constant. Where a value MUST agree
