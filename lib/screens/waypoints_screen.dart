@@ -442,7 +442,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                   ? Icons.warning_rounded
                   : isActive ? Icons.navigation : Icons.location_on_outlined,
               color: isEmergency
-                  ? kDEmg
+                  ? (_day ? kDEmg : kN0)
                   : isActive ? (_day ? kDNav : kN0) : _cDim,
               size: 22,
             ),
@@ -451,7 +451,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           wp.name,
           style: TextStyle(
             color: isEmergency
-                ? kDEmg
+                ? (_day ? kDEmg : kN0)
                 : isActive
                     ? (_day ? kDNav : kN0)
                     : _cPrimary,

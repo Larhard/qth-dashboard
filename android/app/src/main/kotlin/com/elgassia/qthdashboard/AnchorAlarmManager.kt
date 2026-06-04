@@ -170,11 +170,12 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         return buf
     }
 
-    /** Single 880 Hz ping, 250 ms with a smooth fade-out — gentle, one-shot. */
-    private fun warningBuffer(): ShortArray = synthesise(250, 0.32) { t ->
+    /** Single 880 Hz ping, 250 ms with a smooth fade-out — gentle, one-shot. Cached. */
+    private var warningBuf: ShortArray? = null
+    private fun warningBuffer(): ShortArray = warningBuf ?: synthesise(250, 0.32) { t ->
         val env = 1.0 - (t / 0.25)            // linear fade across the 250 ms
         sin(2 * PI * 880.0 * t) * env
-    }
+    }.also { warningBuf = it }
 
     /**
      * The continuous alarm tone, rendered ONCE into a 2 s buffer that loops
@@ -275,38 +276,13 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         }
     }
 
-    /** Create a MODE_STREAM track with a generous buffer (used for one-shot pings). */
-    private fun newStreamTrack(volumeScale: Float): AudioTrack {
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val bufBytes = maxOf(minBuf, sampleRate) // ~0.5 s (sampleRate shorts = sampleRate*2 bytes)
-        val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            AudioTrack.Builder()
-                .setAudioAttributes(buildAudioAttributes())
-                .setAudioFormat(AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build())
-                .setBufferSizeInBytes(bufBytes)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            AudioTrack(AudioManager.STREAM_ALARM, sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                bufBytes, AudioTrack.MODE_STREAM)
-        }
-        if (volumeScale < 1.0f) track.setVolume(volumeScale)
-        return track
-    }
-
     /**
-     * Create a MODE_STATIC track holding [buf] and set to loop forever in hardware.
-     * The PCM is pre-loaded, so play() starts essentially immediately (no lag) and
-     * there is no feeder thread that could underrun (no glitches).
+     * Create a MODE_STATIC track holding [buf].  The PCM is pre-loaded BEFORE play(),
+     * so playback starts immediately and reliably — there is no MODE_STREAM warm-up
+     * race (the cause of the dropped first warning ping) and nothing to underrun.
+     * [loop] = true loops forever in hardware (siren); false plays [buf] once (ping).
      */
-    private fun newStaticLoopTrack(buf: ShortArray, volumeScale: Float): AudioTrack {
+    private fun newStaticTrack(buf: ShortArray, volumeScale: Float, loop: Boolean): AudioTrack {
         val bytes = buf.size * 2
         val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             AudioTrack.Builder()
@@ -325,8 +301,8 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
                 AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 bytes, AudioTrack.MODE_STATIC)
         }
-        track.write(buf, 0, buf.size)             // load the whole loop up front
-        track.setLoopPoints(0, buf.size, -1)      // -1 = loop indefinitely
+        track.write(buf, 0, buf.size)                          // load the whole buffer up front
+        if (loop) track.setLoopPoints(0, buf.size, -1)         // -1 = loop indefinitely
         if (volumeScale < 1.0f) track.setVolume(volumeScale)
         return track
     }
@@ -346,23 +322,24 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         forceMaxAlarmVolumeIf(maxVolume)
         requestFocus(exclusive = maxVolume)
         try {
-            val speaker = newStaticLoopTrack(alarmLoop(), volumeScale)
+            val speaker = newStaticTrack(alarmLoop(), volumeScale, loop = true)
             pinToSpeaker(speaker)
             speaker.play()
             loopTrack = speaker
         } catch (_: Exception) {}
     }
 
-    /** One-shot playback (warning ping) — single speaker-pinned track, auto-released. */
+    /** One-shot playback (warning ping) — single speaker-pinned track, auto-released.
+     *  MODE_STATIC: the buffer is loaded before play(), so the ping is never dropped
+     *  to a cold-track warm-up race the way a MODE_STREAM play-then-write would be. */
     private fun playOnce(pcm: ShortArray) {
         forceMaxAlarmVolume()
         requestFocus(exclusive = false)
         val durationMs = (pcm.size.toLong() * 1000L / sampleRate) + 250L
         try {
-            val track = newStreamTrack(1.0f)
+            val track = newStaticTrack(pcm, 1.0f, loop = false)
             pinToSpeaker(track)
             track.play()
-            track.write(pcm, 0, pcm.size)  // blocking; buffer plays out
             oneShotTracks.add(track)
             handler.postDelayed({ releaseOneShot(track) }, durationMs)
         } catch (_: Exception) {}
