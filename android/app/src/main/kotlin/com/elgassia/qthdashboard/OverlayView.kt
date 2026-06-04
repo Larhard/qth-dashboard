@@ -39,24 +39,35 @@ class OverlayView(context: Context) : View(context) {
     @Volatile var secondaryColor = Color.GRAY
     @Volatile var northColor = Color.RED
     @Volatile var ringColor = Color.WHITE
-    @Volatile var line1 = ""
-    @Volatile var line2 = ""
     @Volatile var bgColor = 0xCC000000.toInt()
     @Volatile var textColor = Color.WHITE
-    @Volatile var subColor = Color.LTGRAY
+    // Info lines (city / waypoint / MOB / anchor), each with its palette colour.
+    @Volatile var lineTexts = arrayOf<String>()
+    @Volatile var lineColors = IntArray(0)
     // POI markers (parallel arrays): bearing°, ARGB colour, size scale.
     @Volatile var markerBearings = DoubleArray(0)
     @Volatile var markerColors = IntArray(0)
     @Volatile var markerScales = DoubleArray(0)
 
-    fun applyData() = postInvalidate()
+    fun applyData() {
+        requestLayout()   // height depends on the number of info lines
+        postInvalidate()
+    }
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.LEFT }
 
+    // Geometry (kept in sync between onMeasure and onDraw).
+    private val padV get() = dp(9f)
+    private val headingH get() = dp(26f)
+    private val lineH get() = dp(14f)
+    private val compassMin get() = dp(70f)
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(dp(200f).toInt(), dp(84f).toInt())
+        val contentH = headingH + lineTexts.size * lineH
+        val h = (padV * 2 + maxOf(compassMin, contentH)).toInt()
+        setMeasuredDimension(dp(210f).toInt(), h)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -66,7 +77,7 @@ class OverlayView(context: Context) : View(context) {
         fill.style = Paint.Style.FILL; fill.color = bgColor
         canvas.drawRoundRect(RectF(0f, 0f, w, h), dp(12f), dp(12f), fill)
 
-        val cx = dp(44f); val cy = h / 2f; val r = dp(32f)
+        val cx = dp(40f); val cy = h / 2f; val r = dp(28f)
 
         // ── Ring ──────────────────────────────────────────────────────────────
         stroke.color = ringColor
@@ -103,10 +114,12 @@ class OverlayView(context: Context) : View(context) {
                     dp(1.4f), dp(5f))
             }
             drawTick(canvas, cx, cy, r, 0.0, northColor, dp(2f), dp(7f)) // North mark
-            if (headingValid) drawNeedle(canvas, cx, cy, r, heading.toDouble(), primaryColor)
+            // Secondary heading as a dimmed needle (matches the main dashboard).
             if (!secondaryBearing.isNaN()) {
-                drawDot(canvas, cx, cy, r, secondaryBearing.toDouble(), secondaryColor, dp(2.5f))
+                drawNeedle(canvas, cx, cy, r, secondaryBearing.toDouble(),
+                    withAlpha(secondaryColor, 97))   // ~0.38 opacity, like the main view
             }
+            if (headingValid) drawNeedle(canvas, cx, cy, r, heading.toDouble(), primaryColor)
         }
 
         // ── POI dots (city / waypoint / MOB) ───────────────────────────────────
@@ -128,18 +141,22 @@ class OverlayView(context: Context) : View(context) {
             }
         }
 
-        // ── Numeric heading + info lines ────────────────────────────────────────
-        val tx = dp(86f)
-        text.color = textColor; text.isFakeBoldText = true; text.textSize = dp(22f)
-        canvas.drawText(if (headingValid) "${Math.round(heading)}°" else "---", tx, cy - dp(4f), text)
-
-        text.isFakeBoldText = false
+        // ── Numeric heading + per-POI info lines ────────────────────────────────
+        val tx = dp(82f)
         val maxW = w - tx - dp(8f)
-        text.color = subColor; text.textSize = dp(11.5f)
-        canvas.drawText(ellipsize(line1, maxW), tx, cy + dp(12f), text)
-        if (line2.isNotEmpty()) {
-            text.textSize = dp(10f)
-            canvas.drawText(ellipsize(line2, maxW), tx, cy + dp(26f), text)
+        // Vertically centre the whole text block (heading + lines).
+        val blockH = headingH + lineTexts.size * lineH
+        var y = (h - blockH) / 2f + dp(20f)   // baseline of the heading number
+
+        text.color = textColor; text.isFakeBoldText = true; text.textSize = dp(22f)
+        text.textAlign = Paint.Align.LEFT
+        canvas.drawText(if (headingValid) "${Math.round(heading)}°" else "---", tx, y, text)
+
+        text.isFakeBoldText = false; text.textSize = dp(11f)
+        for (i in lineTexts.indices) {
+            y += lineH
+            text.color = if (i < lineColors.size) lineColors[i] else textColor
+            canvas.drawText(ellipsize(lineTexts[i], maxW), tx, y, text)
         }
     }
 

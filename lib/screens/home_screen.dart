@@ -124,6 +124,8 @@ class _HomeScreenState extends State<HomeScreen>
   // AnimationController drives the full-screen strobe when alarm level == alarm.
   // Runs only while alarm is active — zero overhead otherwise.
   late final AnimationController _strobeCtrl;
+  // Drives the 3-second hold-to-mute progress on the alarm overlay.
+  late final AnimationController _muteCtrl;
 
   // ── Anchor restore after kill ─────────────────────────────────────────────
   // Called post-frame when loadFromStorage() found a persisted anchor.
@@ -148,11 +150,6 @@ class _HomeScreenState extends State<HomeScreen>
     _showSettingSnack(
         '⚓ Anchor alarm restored (radius ${svc.radiusM.round()} m). Background service active.');
   }
-
-  // Battery monitoring while anchoring.
-  // Levels: 0=none, 1=20% (snackbar), 2=10% (warning alarm), 3=5% (full alarm).
-  int _batteryWarningLevel = 0;
-  int _batteryCheckTick    = 0;
 
   // ── Day / Night mode ──────────────────────────────────────────────────────
   // Day  : full-contrast palette — readable in direct sunlight.
@@ -320,6 +317,16 @@ class _HomeScreenState extends State<HomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 700),
     );
+    _muteCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..addStatusListener((s) {
+        if (s == AnimationStatus.completed) {
+          AnchorService.instance.mute();
+          _muteCtrl.reset();
+          setState(() {});
+        }
+      });
     AnchorService.instance.onStateChanged = _onAnchorStateChanged;
     // Restore anchor if it was active before the app was killed.
     if (AnchorService.instance.loadFromStorage()) {
@@ -336,6 +343,7 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _holdTicker.dispose();
     _strobeCtrl.dispose();
+    _muteCtrl.dispose();
     AnchorService.instance.onStateChanged = null;
     _compassNotifier.dispose();
     _posSub?.cancel();
@@ -428,16 +436,9 @@ class _HomeScreenState extends State<HomeScreen>
       AnchorService.instance.refresh();
 
       // GPS keep-alive — request a fresh single-fix if updates have stalled.
+      // (Battery and GPS-loss are monitored natively in AnchorMonitorService so
+      // they work even when the app is closed.)
       if (sec > 0 && sec % 20 == 0) _requestImmediateGpsFix();
-
-      // Battery monitoring every 30 s.
-      _batteryCheckTick++;
-      if (_batteryCheckTick >= 30) {
-        _batteryCheckTick = 0;
-        _checkAnchorBattery();
-      }
-    } else if (_batteryWarningLevel != 0) {
-      _batteryWarningLevel = 0; // reset when anchor is lifted
     }
   }
 
@@ -910,61 +911,19 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  // ── Anchor alarm ─────────────────────────────────────────────────────────
-  // ── Battery monitoring while anchoring ───────────────────────────────────
-  // Runs only when the anchor is deployed; zero overhead otherwise.
-  //   20 % → one-time snackbar
-  //   10 % → warning alarm trigger + repeated snackbar
-  //    5 % → full alarm trigger
   static const _anchorAlarmChannel = MethodChannel('qth_helper/anchor_alarm');
 
-  Future<void> _checkAnchorBattery() async {
-    if (!mounted || !AnchorService.instance.isActive) return;
-    double pct;
-    try {
-      pct = await _anchorAlarmChannel.invokeMethod<double>('getBatteryLevel') ?? -1;
-    } catch (_) { return; }
-    if (pct < 0) return;
-
-    final newLevel = pct <= 5 ? 3 : pct <= 10 ? 2 : pct <= 20 ? 1 : 0;
-    if (newLevel <= _batteryWarningLevel) return; // no escalation needed
-
-    _batteryWarningLevel = newLevel;
-    final bg  = _dayMode ? kDSnackBg : kNBg;
-    final fg  = _dayMode ? kDFg1     : kN2;
-    switch (newLevel) {
-      case 1:
-        _showSnack('Battery at ${pct.round()} % — consider charging while anchored.',
-            duration: const Duration(seconds: 6));
-      case 2:
-        _showSnack('⚠ Battery at ${pct.round()} % — anchor alarm may stop working soon!',
-            duration: const Duration(seconds: 8));
-        AnchorService.instance.escalateBattery(1);
-      case 3:
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('⚠ CRITICAL: Battery ${pct.round()} % — anchor alarm at risk!',
-              style: TextStyle(color: fg, fontSize: 13)),
-          backgroundColor: bg,
-          duration: const Duration(seconds: 12),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        ));
-        AnchorService.instance.escalateBattery(2);
-    }
-  }
-
   // ── Floating overlay data push ────────────────────────────────────────────
-  // Builds one frame for the native compass overlay. No-op unless it's shown.
+  // Builds one frame for the native compass overlay (compass + all POI dots +
+  // one coloured text line per active item).  No-op unless the overlay is shown.
   void _pushOverlay() {
     if (!OverlayController.instance.isShown) return;
-    final anchoring = AnchorService.instance.isActive;
     final windRose  = _headingArrowMode == HeadingArrowMode.windRose;
     final secondary = _headingSourceMode == HeadingSourceMode.auto
         ? _compassHeading
         : (_track.bearing ?? _lastValidGpsHeading);
 
-    // Same POI dots as the main bearing ring (city / nav waypoint / MOB).
+    // POI dots — exactly the main bearing ring (city / nav waypoint / MOB).
     final pos = _position;
     final markers = pos != null ? _bearingMarkers(pos) : const [];
     final mB = <double>[]; final mC = <int>[]; final mS = <double>[];
@@ -974,34 +933,42 @@ class _HomeScreenState extends State<HomeScreen>
       mS.add(m.sizeScale);
     }
 
-    // Info text: anchor status when anchoring, else nearest city. A nav waypoint
-    // and/or MOB always show as dots on the ring regardless.
-    String line1, line2;
-    if (anchoring) {
-      final a = AnchorService.instance;
-      line1 = switch (a.level) {
-        AnchorAlarmLevel.alarm   => '⚓ ANCHOR ALARM',
-        AnchorAlarmLevel.warning => '⚓ Anchor warning',
-        AnchorAlarmLevel.idle    => '⚓ Anchor OK',
-      };
-      line2 = a.gpsLost
-          ? 'GPS lost ${a.gpsLossSeconds}s'
-          : '${(a.distanceM ?? 0).round()} m / ${a.radiusM.round()} m';
-    } else {
+    // One coloured text line per active item, each in its dashboard palette colour.
+    final lineTexts = <String>[];
+    final lineColors = <int>[];
+    void addLine(String text, Color c) { lineTexts.add(text); lineColors.add(c.toARGB32()); }
+    String bd(double b, double distKm) =>
+        '${b.round()}°  ${formatDistanceUnit(distKm, _speedUnit)}';
+
+    final nc = _nearestCity;
+    if (nc != null) addLine(nc.city.name, _cityColor);
+
+    if (pos != null) {
       final nav = WaypointService.instance.active;
-      final nc = _nearestCity;
-      if (nav != null && pos != null) {
-        // A selected waypoint takes priority in the text line.
+      if (nav != null) {
         final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
-        final dist = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
-        line1 = '› ${nav.name}';
-        line2 = '${b.round()}°  ${formatDistanceUnit(dist, _speedUnit)}';
-      } else {
-        line1 = nc?.city.name ?? '—';
-        line2 = nc != null
-            ? '${nc.bearingDeg.round()}°  ${formatDistanceUnit(nc.distKm, _speedUnit)}'
-            : '';
+        final dk = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
+        addLine('› ${nav.name}  ${bd(b, dk)}', _dayMode ? kDNav : kN1);
       }
+      final mob = WaypointService.instance.emergency;
+      if (mob != null) {
+        final b = bearing(pos.latitude, pos.longitude, mob.lat, mob.lon);
+        final dk = haversineKm(pos.latitude, pos.longitude, mob.lat, mob.lon);
+        addLine('MOB  ${bd(b, dk)}', _dayMode ? kDEmg : kN0);
+      }
+    }
+
+    if (AnchorService.instance.isActive) {
+      final a = AnchorService.instance;
+      final status = switch (a.level) {
+        AnchorAlarmLevel.alarm   => '⚓ ALARM',
+        AnchorAlarmLevel.warning => '⚓ WARN',
+        AnchorAlarmLevel.idle    => '⚓ OK',
+      };
+      final detail = a.gpsLost
+          ? 'GPS lost ${a.gpsLossSeconds}s'
+          : '${(a.distanceM ?? 0).round()}/${a.radiusM.round()} m';
+      addLine('$status  $detail', _anchorLevelColor(a.level));
     }
 
     OverlayController.instance.update(
@@ -1009,16 +976,14 @@ class _HomeScreenState extends State<HomeScreen>
       headingValid: _intendedSourceHasData,
       windRose: windRose,
       secondaryBearing: secondary,
-      primaryColor: _headingColor,
+      primaryColor: _headingColor,          // GPS/TRK/MAG colour, as on the dashboard
       secondaryColor: _secondaryHeadingColor,
       northColor: _dayMode ? kDEmg : kN0,
       ringColor: _dayMode ? kDFg0 : kN2,
-      line1: line1,
-      line2: line2,
       bgColor: (_dayMode ? Colors.black : kNBg).withValues(alpha: 0.92),
       textColor: _dayMode ? kDFg0 : kN1,
-      subColor: anchoring ? _anchorLevelColor(AnchorService.instance.level)
-                          : (_dayMode ? kDFg2 : kN2),
+      lineTexts: lineTexts,
+      lineColors: lineColors,
       markerBearings: mB,
       markerColors: mC,
       markerScales: mS,
@@ -1028,12 +993,13 @@ class _HomeScreenState extends State<HomeScreen>
   void _onAnchorStateChanged() {
     if (!mounted) return;
     final svc = AnchorService.instance;
-    // The strobe overlay shows only for an UN-silenced alarm.
-    final showStrobe = svc.level == AnchorAlarmLevel.alarm && !svc.isSilenced;
+    // The full-screen strobe shows for an un-muted alarm.
+    final showStrobe = svc.level == AnchorAlarmLevel.alarm && !svc.isMuted;
     if (showStrobe) {
       if (!_strobeCtrl.isAnimating) _strobeCtrl.repeat(reverse: true);
     } else {
       if (_strobeCtrl.isAnimating) _strobeCtrl.stop();
+      if (_muteCtrl.value != 0) _muteCtrl.reset(); // cancel any partial hold
     }
     setState(() {});
   }
@@ -1157,14 +1123,11 @@ class _HomeScreenState extends State<HomeScreen>
                   style: TextStyle(fontSize: labelFont, color: color.withValues(alpha: 0.65))),
             ],
           )),
-          // Silence button (only during alarm)
-          if (lvl == AnchorAlarmLevel.alarm && !svc.isSilenced)
-            GestureDetector(
-              onLongPress: () => setState(() => svc.silenceAlarm()),
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Icon(Icons.volume_off, color: color, size: 20),
-              ),
+          // Muted indicator (alarm is acknowledged but anchor still deployed).
+          if (svc.isMuted)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(Icons.volume_off, color: color.withValues(alpha: 0.6), size: 18),
             ),
         ]),
       ),
@@ -1215,36 +1178,11 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                   const SizedBox(height: 48),
-                  // Silence action — hold 3 s
-                  GestureDetector(
-                    onLongPress: () {
-                      AnchorService.instance.silenceAlarm();
-                      _strobeCtrl.stop();
-                      setState(() {});
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: bright
-                              ? (_dayMode ? kDEmg : kN0)
-                              : (_dayMode ? Colors.white : Colors.black),
-                          width: 2,
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text('HOLD 3s TO SILENCE',
-                          style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 2,
-                            color: bright
-                                ? (_dayMode ? kDEmg : kN0)
-                                : (_dayMode ? Colors.white : Colors.black),
-                          )),
-                    ),
-                  ),
+                  // Mute — must HOLD for 3 s (a tap won't dismiss it).
+                  _muteHoldButton(bright),
                   const SizedBox(height: 16),
                   // SAFETY: lifting the anchor is only available from the
-                  // Waypoints screen.  This screen only allows silencing.
+                  // Waypoints screen.  This screen only allows muting.
                   Text('Open Waypoints screen to lift anchor.',
                       style: TextStyle(fontSize: 12,
                           color: bright
@@ -1256,6 +1194,49 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
       },
+    );
+  }
+
+  /// Hold-to-mute control with a MOB-style progress bar.  A tap does nothing;
+  /// the alarm is muted only after a continuous 3-second hold.
+  Widget _muteHoldButton(bool bright) {
+    final fg = bright
+        ? (_dayMode ? kDEmg : kN0)
+        : (_dayMode ? Colors.white : Colors.black);
+    return Listener(
+      onPointerDown: (_) => _muteCtrl.forward(from: _muteCtrl.value),
+      onPointerUp: (_) => _muteCtrl.reverse(),
+      onPointerCancel: (_) => _muteCtrl.reverse(),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedBuilder(
+        animation: _muteCtrl,
+        builder: (_, __) => Container(
+          width: 240,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          decoration: BoxDecoration(
+            border: Border.all(color: fg, width: 2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_muteCtrl.value > 0 ? 'KEEP HOLDING…' : 'HOLD 3s TO MUTE',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 2, color: fg)),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: _muteCtrl.value,
+                  minHeight: 6,
+                  backgroundColor: fg.withValues(alpha: 0.20),
+                  valueColor: AlwaysStoppedAnimation<Color>(fg),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1356,7 +1337,7 @@ class _HomeScreenState extends State<HomeScreen>
             isLandscape ? _buildLandscape(pos) : _buildPortrait(pos),
             // Anchor alarm overlay — shown on top of everything when alarm is active.
             if (AnchorService.instance.level == AnchorAlarmLevel.alarm &&
-                !AnchorService.instance.isSilenced)
+                !AnchorService.instance.isMuted)
               _buildAlarmOverlay(),
             // Waypoints — 48 × 48 hit area, icon visually at top-right corner.
             Positioned(

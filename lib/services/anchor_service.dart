@@ -41,8 +41,10 @@ class AnchorService {
   double? _distanceM;
   double? _bearingDeg;
   int     _gpsLossSeconds = 0;
-  bool    _silenced       = false;
+  bool    _muted          = false;
   bool    _hasFix         = false;
+  int     _batteryPct     = 100;
+  bool    _charging       = true;
 
   /// Called by the UI whenever the polled snapshot changes.
   void Function()? onStateChanged;
@@ -56,10 +58,12 @@ class AnchorService {
   double?          get anchorLat       => _lat;
   double?          get anchorLon       => _lon;
   AnchorAlarmLevel get level           => _level;
-  bool             get gpsLost         => _gpsLossSeconds >= 10;
+  bool             get gpsLost         => _gpsLossSeconds > 0;
   int              get gpsLossSeconds  => _gpsLossSeconds;
-  bool             get isSilenced      => _silenced;
+  bool             get isMuted         => _muted;
   bool             get hasFix          => _hasFix;
+  int              get batteryPct      => _batteryPct;
+  bool             get charging        => _charging;
   bool             get prevGpsOnLock   => _prevGpsOnLock;
   double           get warningRadiusM  => _radiusM * _warningFraction;
 
@@ -77,7 +81,7 @@ class AnchorService {
     _prevGpsOnLock = prevGpsOnLock;
     _active = true;
     _level = AnchorAlarmLevel.idle;
-    _silenced = false; _hasFix = false;
+    _muted = false; _hasFix = false;
     _gpsLossSeconds = 0; _distanceM = 0.0; _bearingDeg = 0.0;
     _persist();
     onStateChanged?.call();
@@ -86,7 +90,7 @@ class AnchorService {
   void liftAnchor() {
     _active = false;
     _level = AnchorAlarmLevel.idle;
-    _silenced = false; _hasFix = false;
+    _muted = false; _hasFix = false;
     _distanceM = null; _bearingDeg = null; _gpsLossSeconds = 0;
     _clearPersisted();
     onStateChanged?.call();
@@ -103,7 +107,7 @@ class AnchorService {
     _prevGpsOnLock = _store.read<bool>(_kPrevGps) ?? true;
     _active = true;
     _level = AnchorAlarmLevel.idle;
-    _silenced = false; _hasFix = false;
+    _muted = false; _hasFix = false;
     _gpsLossSeconds = 0; _distanceM = null; _bearingDeg = null;
     return true;
   }
@@ -125,8 +129,10 @@ class AnchorService {
     _distanceM      = (s['distanceM'] as num?)?.toDouble();
     _bearingDeg     = (s['bearingDeg'] as num?)?.toDouble();
     _gpsLossSeconds = (s['gpsLossSeconds'] as int?) ?? 0;
-    _silenced       = (s['silenced'] as bool?) ?? false;
+    _muted          = (s['muted'] as bool?) ?? false;
     _hasFix         = (s['hasFix'] as bool?) ?? false;
+    _batteryPct     = (s['batteryPct'] as int?) ?? 100;
+    _charging       = (s['charging'] as bool?) ?? true;
     onStateChanged?.call();
   }
 
@@ -139,15 +145,11 @@ class AnchorService {
         {'lat': lat, 'lon': lon, 'acc': accuracyM}).catchError((_) {});
   }
 
-  void silenceAlarm() {
-    _silenced = true;
-    _ch.invokeMethod('silenceAnchor').catchError((_) {});
+  /// Acknowledge the alarm (3-second hold).  Silences until the boat is safe.
+  void mute() {
+    _muted = true;
+    _ch.invokeMethod('muteAnchor').catchError((_) {});
     onStateChanged?.call();
-  }
-
-  void escalateBattery(int floor) {
-    if (!_active) return;
-    _ch.invokeMethod('escalateBattery', {'floor': floor}).catchError((_) {});
   }
 
   // ── Persistence helpers ───────────────────────────────────────────────────────

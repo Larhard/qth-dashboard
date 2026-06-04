@@ -146,16 +146,18 @@ class OverlayService : Service(), SensorEventListener {
         v.headingValid = true
         // Keep the last colours/mode pushed by Flutter; refresh live anchor data.
         if (AnchorController.active) {
-            v.line1 = when (AnchorController.level) {
-                2 -> "⚓ ANCHOR ALARM"
-                1 -> "⚓ Anchor warning"
-                else -> "⚓ Anchor OK"
+            val status = when (AnchorController.state) {
+                AnchorController.State.ALARM   -> "⚓ ALARM"
+                AnchorController.State.WARNING -> "⚓ WARNING"
+                AnchorController.State.SAFE    -> "⚓ OK"
             }
-            v.line2 = if (AnchorController.gpsLossSeconds >= 10)
-                "GPS lost ${AnchorController.gpsLossSeconds}s"
+            val detail = if (AnchorController.gpsLostSeconds > 0)
+                "GPS lost ${AnchorController.gpsLostSeconds}s"
             else
-                "${AnchorController.distanceM.roundToInt()} m / ${AnchorController.radiusM.roundToInt()} m"
-            // One dot toward the anchor (MOB-style: red, large).
+                "${AnchorController.distanceM.roundToInt()} / ${AnchorController.radiusM.roundToInt()} m"
+            v.lineTexts = arrayOf("$status  $detail")
+            v.lineColors = intArrayOf(v.northColor)
+            // One dot toward the anchor.
             v.markerBearings = doubleArrayOf(AnchorController.bearingDeg)
             v.markerColors = intArrayOf(v.northColor)
             v.markerScales = doubleArrayOf(1.45)
@@ -217,8 +219,8 @@ class OverlayService : Service(), SensorEventListener {
     fun update(
         heading: Double, headingValid: Boolean, windRose: Boolean,
         secondaryBearing: Double?, primaryColor: Long, secondaryColor: Long,
-        northColor: Long, ringColor: Long, line1: String, line2: String,
-        bgColor: Long, textColor: Long, subColor: Long,
+        northColor: Long, ringColor: Long, bgColor: Long, textColor: Long,
+        lineTexts: Array<String>, lineColors: IntArray,
         markerBearings: DoubleArray, markerColors: IntArray, markerScales: DoubleArray,
     ) {
         lastFlutterUpdate = SystemClock.elapsedRealtime() // Flutter is alive → it drives
@@ -231,11 +233,10 @@ class OverlayService : Service(), SensorEventListener {
         v.secondaryColor = secondaryColor.toInt()
         v.northColor = northColor.toInt()
         v.ringColor = ringColor.toInt()
-        v.line1 = line1
-        v.line2 = line2
         v.bgColor = bgColor.toInt()
         v.textColor = textColor.toInt()
-        v.subColor = subColor.toInt()
+        v.lineTexts = lineTexts
+        v.lineColors = lineColors
         v.markerBearings = markerBearings
         v.markerColors = markerColors
         v.markerScales = markerScales

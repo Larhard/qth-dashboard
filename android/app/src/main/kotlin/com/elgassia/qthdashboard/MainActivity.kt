@@ -334,11 +334,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         result.success(null)
                     }
                     "getAnchorSnapshot"   -> result.success(AnchorController.snapshot())
-                    "silenceAnchor"       -> { AnchorController.silence(); result.success(null) }
-                    "escalateBattery"     -> {
-                        AnchorController.escalateBattery(call.argument<Int>("floor") ?: 0)
-                        result.success(null)
-                    }
+                    "muteAnchor"          -> { AnchorController.mute(); result.success(null) }
                     "forwardPosition"     -> {
                         // Foreground forwards its (reliable, fused) fixes so the
                         // GPS-loss timer is reset by the most reliable source.
@@ -347,13 +343,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             call.argument<Double>("lon") ?: 0.0,
                             call.argument<Double>("acc") ?: -1.0)
                         result.success(null)
-                    }
-                    "getBatteryLevel" -> {
-                        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                        val level  = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                        val scale  = intent?.getIntExtra(BatteryManager.EXTRA_SCALE,  -1) ?: -1
-                        val pct    = if (level >= 0 && scale > 0) level * 100.0 / scale else -1.0
-                        result.success(pct)
                     }
                     else -> result.notImplemented()
                 }
@@ -399,6 +388,10 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             .map { it.toLong().toInt() }.toIntArray()
                         val ms = (call.argument<List<Number>>("markerScales") ?: emptyList())
                             .map { it.toDouble() }.toDoubleArray()
+                        val lt = (call.argument<List<String>>("lineTexts") ?: emptyList())
+                            .toTypedArray()
+                        val lc = (call.argument<List<Number>>("lineColors") ?: emptyList())
+                            .map { it.toLong().toInt() }.toIntArray()
                         OverlayService.instance?.update(
                             heading          = call.argument<Double>("heading") ?: 0.0,
                             headingValid     = call.argument<Boolean>("headingValid") ?: true,
@@ -408,11 +401,10 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             secondaryColor   = (call.argument<Number>("secondaryColor") ?: 0).toLong(),
                             northColor       = (call.argument<Number>("northColor")     ?: 0).toLong(),
                             ringColor        = (call.argument<Number>("ringColor")      ?: 0).toLong(),
-                            line1            = call.argument<String>("line1") ?: "",
-                            line2            = call.argument<String>("line2") ?: "",
                             bgColor          = (call.argument<Number>("bgColor")   ?: 0).toLong(),
                             textColor        = (call.argument<Number>("textColor") ?: 0).toLong(),
-                            subColor         = (call.argument<Number>("subColor")  ?: 0).toLong(),
+                            lineTexts        = lt,
+                            lineColors       = lc,
                             markerBearings   = mb,
                             markerColors     = mc,
                             markerScales     = ms,

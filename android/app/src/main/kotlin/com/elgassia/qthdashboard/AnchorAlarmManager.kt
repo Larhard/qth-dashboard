@@ -139,7 +139,7 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         if (mode == Mode.TEST) { stop(); return }
         stop()
         mode = Mode.TEST
-        startAlarmSynth(maxVolume = false, volumeScale = 0.20f)
+        startAlarmSynth(maxVolume = false, volumeScale = 0.10f)
         vibrateShort()
         // Safety auto-stop after 60 s in case the user forgets.
         handler.postDelayed({ if (mode == Mode.TEST) stop() }, 60_000L)

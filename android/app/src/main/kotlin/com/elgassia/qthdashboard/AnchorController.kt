@@ -3,72 +3,89 @@ package com.elgassia.qthdashboard
 import android.content.Context
 import android.location.Location
 import android.os.SystemClock
+import kotlin.math.max
 
 /**
- * Single source of truth for anchor-alarm STATE and LEVEL logic.
+ * Single source of truth for the anchor alarm — a latching state machine.
  *
- * Owned by no single component: both [AnchorMonitorService] (which feeds GPS and
- * owns the notification) and [MainActivity] (which bridges to Flutter) delegate
- * here.  This guarantees there is exactly one level computation and one
- * [AnchorAlarmManager] driving the hardware — eliminating the dual-instance
- * audio fight.
+ * Owned by no single component: [AnchorMonitorService] feeds it GPS / GNSS /
+ * battery / ticks, and [MainActivity] bridges it to Flutter.  Everything runs on
+ * the one main thread (the service and activity share it), so there is no locking
+ * and no race.
  *
- * Level thresholds MUST stay in sync with the Dart spec in
- * `lib/utils/anchor_math.dart` (see AnchorMath).  The Dart copy exists so the
- * logic is unit-tested; this copy exists so the service is self-sufficient when
- * the Flutter engine is dead.
+ * Design goals (bulletproof reliability):
+ *   • A coarse (NETWORK / low-accuracy) fix never moves the anchor distance — only
+ *     accurate fixes do — so a bad fix can't flash a false alarm.
+ *   • Position level has HYSTERESIS — jitter at the boundary can't chatter.
+ *   • "GPS lost" means REALLY lost (no fix AND no satellites in fix), never just
+ *     "stationary and not pushing updates" (the service holds a wake-lock and asks
+ *     for 1 Hz updates so a stationary receiver keeps delivering).
+ *   • The ALARM state LATCHES: once raised it stays until the user mutes it
+ *     (3-second hold) — returning inside the radius does NOT silence it.
+ *   • WARNING auto-clears when the boat returns to the safe zone.
+ *   • After muting, the alarm re-arms only once the boat is safe again.
  *
- *   level 0 idle    — inside warn zone, GPS fresh
- *   level 1 warning — dist ≥ warnFrac·radius, OR GPS lost 60–180 s, OR battery floor 1
- *   level 2 alarm   — dist ≥ radius,         OR GPS lost > 180 s,    OR battery floor 2
+ * State ordinals match the Dart AnchorAlarmLevel enum: SAFE=0, WARNING=1, ALARM=2.
  */
 object AnchorController {
 
+    enum class State { SAFE, WARNING, ALARM }
+
     // ── Configuration ────────────────────────────────────────────────────────
-    @Volatile var active = false;     private set
-    @Volatile var lat = 0.0;          private set
-    @Volatile var lon = 0.0;          private set
-    @Volatile var radiusM = 50.0;     private set
-    @Volatile var warnFrac = 0.80;    private set
+    @Volatile var active = false;  private set
+    @Volatile var lat = 0.0;       private set
+    @Volatile var lon = 0.0;       private set
+    @Volatile var radiusM = 50.0;  private set   // 10..1000
+    @Volatile var warnFrac = 0.80; private set
 
     // ── Live state ────────────────────────────────────────────────────────────
-    @Volatile var distanceM = 0.0;       private set
-    @Volatile var bearingDeg = 0.0;      private set
-    @Volatile var gpsLossSeconds = 0;    private set
-    @Volatile var level = 0;             private set   // 0 idle, 1 warning, 2 alarm
-    @Volatile var silenced = false;      private set
-    @Volatile var hasFix = false;        private set
+    @Volatile var distanceM = 0.0;     private set
+    @Volatile var bearingDeg = 0.0;    private set
+    @Volatile var gpsLostSeconds = 0;  private set
+    @Volatile var hasFix = false;      private set
+    @Volatile var state = State.SAFE;  private set
+    @Volatile var muted = false;       private set   // muted-until-safe
 
-    private var batteryFloor = 0
-    private var lastFixElapsed = 0L      // SystemClock.elapsedRealtime of last fix
+    // ── Internal ───────────────────────────────────────────────────────────────
+    private var posLevel = 0                 // position level with hysteresis (0/1/2)
+    private var lastFixElapsed = 0L          // SystemClock.elapsedRealtime of last fix
+    private var satsUsedInFix = -1           // GNSS satellites used (-1 = unknown)
+    private var batteryPct = 100
+    private var charging = true
     private var alarm: AnchorAlarmManager? = null
-    // Position-derived level with hysteresis (separate from the combined `level`)
-    // so GPS jitter around the boundary can't make the alarm chatter on/off.
-    private var posLevel = 0
 
-    /** Service sets this to refresh its notification when state changes. */
+    /** Service sets this to refresh its notification on every state change. */
     var onStateChanged: (() -> Unit)? = null
-    /** Service sets this to launch the activity when escalating to ALARM. */
+    /** Service sets this to launch the activity when the alarm is first raised. */
     var onAlarmEscalated: (() -> Unit)? = null
+
+    // Tunables
+    private const val GPS_NOFIX_GRACE_S = 8      // a real receiver delivers ≤1 Hz
+    private const val GPS_WARN_S = 60
+    private const val GPS_ALARM_S = 180
+    private const val BATT_WARN_PCT = 20
+    private const val BATT_ALARM_PCT = 7
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     fun start(ctx: Context, lat: Double, lon: Double, radiusM: Double, warnFrac: Double) {
         alarm = AnchorAlarmManager.getInstance(ctx)
         this.lat = lat; this.lon = lon
-        this.radiusM = radiusM; this.warnFrac = warnFrac
+        this.radiusM = radiusM.coerceIn(10.0, 1000.0)
+        this.warnFrac = warnFrac.coerceIn(0.50, 0.95)
         active = true
         distanceM = 0.0; bearingDeg = 0.0
-        gpsLossSeconds = 0; level = 0; posLevel = 0; silenced = false
-        batteryFloor = 0; hasFix = false
+        gpsLostSeconds = 0; hasFix = false
+        state = State.SAFE; muted = false; posLevel = 0
+        satsUsedInFix = -1; batteryPct = 100; charging = true
         lastFixElapsed = SystemClock.elapsedRealtime()
         onStateChanged?.invoke()
     }
 
     fun stopAll() {
         active = false
-        level = 0; posLevel = 0; silenced = false; batteryFloor = 0
-        gpsLossSeconds = 0; hasFix = false
+        state = State.SAFE; muted = false; posLevel = 0
+        gpsLostSeconds = 0; hasFix = false
         alarm?.stop()
         onStateChanged?.invoke()
     }
@@ -76,116 +93,133 @@ object AnchorController {
     // ── Inputs ──────────────────────────────────────────────────────────────────
 
     /**
-     * A fresh GPS fix.  [accuracyM] is the horizontal accuracy in metres
-     * (< 0 if unknown).
-     *
-     * ANY fix resets the GPS-loss timer (liveness — a coarse NETWORK fix still
-     * proves the receiver is alive).  But the anchor DISTANCE is only updated from
-     * a sufficiently ACCURATE fix: a wildly inaccurate NETWORK fix (off by 100s of
-     * metres) would otherwise momentarily compute a huge distance and flash the
-     * alarm even while the boat is sitting well inside the radius.
+     * A GPS fix.  [accuracyM] = horizontal accuracy in metres (<0 if unknown).
+     * Any fix resets the loss timer (liveness); only an ACCURATE fix moves the
+     * anchor distance (a coarse NETWORK fix would otherwise false-alarm).
      */
     fun onPosition(lat: Double, lon: Double, accuracyM: Double = -1.0) {
         if (!active) return
         lastFixElapsed = SystemClock.elapsedRealtime()
-        gpsLossSeconds = 0
-
-        // Accept the position only if accuracy is good enough to trust the distance.
-        // Gate = max(15 m, 50 % of radius): rejects coarse cell/wifi fixes.
-        val gate = maxOf(15.0, radiusM * 0.5)
-        if (accuracyM in 0.0..gate || accuracyM < 0) {
+        val gate = max(15.0, radiusM * 0.5)
+        if (accuracyM < 0 || accuracyM <= gate) {
             val d = FloatArray(2)
             Location.distanceBetween(lat, lon, this.lat, this.lon, d)
             distanceM = d[0].toDouble()
-            bearingDeg = ((d[1] + 360.0) % 360.0)
+            bearingDeg = (d[1] + 360.0) % 360.0
             hasFix = true
         }
-        recompute()
+        evaluate()
     }
 
-    /** Periodic tick (every 1 s) — recomputes GPS-loss duration from the clock. */
+    /** GNSS satellite status — distinguishes "stationary" (sats>0) from "lost". */
+    fun onGnss(satellitesUsedInFix: Int) {
+        satsUsedInFix = satellitesUsedInFix
+        evaluate()
+    }
+
+    /** Battery state from the service's ACTION_BATTERY_CHANGED receiver. */
+    fun onBattery(pct: Int, charging: Boolean) {
+        this.batteryPct = pct
+        this.charging = charging
+        evaluate()
+    }
+
+    /** Periodic 1 Hz tick — re-derives the GPS-loss duration. */
     fun tick() {
         if (!active) return
-        gpsLossSeconds = ((SystemClock.elapsedRealtime() - lastFixElapsed) / 1000L).toInt()
-        recompute()
+        val noFix = ((SystemClock.elapsedRealtime() - lastFixElapsed) / 1000L).toInt()
+        // "Really lost" = no fix for a while AND no satellites used in the fix.
+        // If satellites are still used (>0) the receiver is fine — we're just
+        // stationary — so the loss timer stays at zero (no false alarm).
+        val reallyLost = noFix > GPS_NOFIX_GRACE_S && satsUsedInFix <= 0
+        gpsLostSeconds = if (reallyLost) noFix else 0
+        evaluate()
     }
 
-    fun silence() {
-        silenced = true
-        alarm?.stop()
+    /** User acknowledged the alarm (3-second hold). Silences until safe again. */
+    fun mute() {
+        muted = true
+        state = State.SAFE
+        applyHardware()
         onStateChanged?.invoke()
-    }
-
-    /** Battery escalation from the foreground: floor = 1 (warning) or 2 (alarm). */
-    fun escalateBattery(floor: Int) {
-        if (!active) return
-        if (floor > batteryFloor) batteryFloor = floor
-        recompute()
     }
 
     // ── Snapshot for the Flutter side ────────────────────────────────────────────
 
     fun snapshot(): Map<String, Any> = mapOf(
         "active"         to active,
-        "level"          to level,
+        "level"          to state.ordinal,   // 0 safe, 1 warning, 2 alarm
         "distanceM"      to distanceM,
         "bearingDeg"     to bearingDeg,
-        "gpsLossSeconds" to gpsLossSeconds,
-        "silenced"       to silenced,
+        "gpsLossSeconds" to gpsLostSeconds,
+        "muted"          to muted,
         "hasFix"         to hasFix,
         "radiusM"        to radiusM,
         "warnFrac"       to warnFrac,
+        "batteryPct"     to batteryPct,
+        "charging"       to charging,
     )
 
-    // ── Core logic ────────────────────────────────────────────────────────────────
+    // ── Core state machine ────────────────────────────────────────────────────────
 
-    private fun recompute() {
+    private fun evaluate() {
+        if (!active) return
         posLevel = positionLevelWithHysteresis()
-        val gpsLossLevel = when {
-            gpsLossSeconds >= 180 -> 2
-            gpsLossSeconds >= 60  -> 1
-            else                  -> 0
+        val gpsLevel = when {
+            gpsLostSeconds >= GPS_ALARM_S -> 2
+            gpsLostSeconds >= GPS_WARN_S  -> 1
+            else -> 0
         }
-        val newLevel = maxOf(posLevel, gpsLossLevel, batteryFloor)
+        val battLevel = when {
+            !charging && batteryPct in 0..BATT_ALARM_PCT -> 2
+            !charging && batteryPct in 0..BATT_WARN_PCT  -> 1
+            else -> 0
+        }
+        val cond = maxOf(posLevel, gpsLevel, battLevel)
+        val prev = state
 
-        // Escalation un-silences so the louder level can sound.
-        if (newLevel > level) silenced = false
-        // Returning to safety re-arms the silence for next time.
-        if (newLevel == 0) silenced = false
+        if (muted) {
+            // Acknowledged: stay quiet until the boat is fully safe, then re-arm.
+            if (cond == 0) muted = false
+            state = State.SAFE
+        } else {
+            state = when {
+                state == State.ALARM -> State.ALARM   // ALARM latches until muted
+                cond == 2 -> State.ALARM
+                cond == 1 -> State.WARNING
+                else -> State.SAFE
+            }
+        }
 
-        val changed = newLevel != level
-        level = newLevel
-
-        if (!silenced) applyHardware()
-        if (changed && newLevel == 2) onAlarmEscalated?.invoke()
-        if (changed) onStateChanged?.invoke()
+        if (state != prev) {
+            applyHardware()
+            if (state == State.ALARM) onAlarmEscalated?.invoke()
+        }
+        onStateChanged?.invoke()  // always — keeps the notification distance fresh
     }
 
     /**
-     * Position level with hysteresis: a level, once entered, is only LEFT once the
-     * boat comes back inside by a margin.  Without this, GPS jitter while physically
-     * stationary near the radius makes the alarm flip on/off ("blinking").
-     *
-     *   enter alarm:   dist ≥ radius           leave alarm:   dist < radius − margin
-     *   enter warning: dist ≥ warnFrac·radius  leave warning: dist < warnFrac·radius − margin
+     * Position level with hysteresis: once a level is entered it is only left after
+     * coming back inside by a margin (≥5 m or 5 % of radius).  Prevents boundary
+     * jitter from chattering the alarm.
      */
     private fun positionLevelWithHysteresis(): Int {
-        if (!hasFix) return 0  // no fix → the GPS-loss timer governs the level
-        val margin = maxOf(5.0, radiusM * 0.05)            // ≥5 m or 5 % of radius
+        if (!hasFix) return 0
+        val margin = max(5.0, radiusM * 0.05)
         val alarmThresh = if (posLevel >= 2) radiusM - margin else radiusM
         val warnThresh  = if (posLevel >= 1) radiusM * warnFrac - margin else radiusM * warnFrac
         return when {
             distanceM >= alarmThresh -> 2
             distanceM >= warnThresh  -> 1
-            else                     -> 0
+            else -> 0
         }
     }
 
     private fun applyHardware() {
-        when (level) {
-            2 -> alarm?.startAlarm()
-            1 -> alarm?.startWarning()
-            else -> alarm?.stop()
+        when (state) {
+            State.ALARM   -> alarm?.startAlarm()
+            State.WARNING -> alarm?.startWarning()
+            State.SAFE    -> alarm?.stop()
         }
     }
 }
