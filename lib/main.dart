@@ -126,6 +126,7 @@ class _QthHelperAppState extends State<QthHelperApp> {
 
   @override
   Widget build(BuildContext context) {
+    final p = Palette.of(_dayMode);
     return MaterialApp(
       title: 'QTH Dashboard',
       debugShowCheckedModeBanner: false,
@@ -149,17 +150,17 @@ class _QthHelperAppState extends State<QthHelperApp> {
         ),
         // Ink ripple / tap highlight — default white causes a grey flash in
         // night mode.  Use palette colours so every InkWell stays on-theme.
-        splashColor:     (_dayMode ? kDFg3 : kN2).withValues(alpha: 0.22),
-        highlightColor:  (_dayMode ? kDFg3 : kN1).withValues(alpha: 0.10),
+        splashColor:     p.rippleMuted.withValues(alpha: 0.22),
+        highlightColor:  p.pick(kDFg3, kN1).withValues(alpha: 0.10),
         // TabBar overlay specifically — overlayColor takes precedence over
         // splashColor inside a TabBar so we set it explicitly as well.
         tabBarTheme: TabBarThemeData(
           overlayColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.pressed)) {
-              return (_dayMode ? kDFg3 : kN2).withValues(alpha: 0.22);
+              return p.rippleMuted.withValues(alpha: 0.22);
             }
             if (states.contains(WidgetState.hovered)) {
-              return (_dayMode ? kDFg3 : kN2).withValues(alpha: 0.10);
+              return p.rippleMuted.withValues(alpha: 0.10);
             }
             return Colors.transparent;
           }),
@@ -169,11 +170,11 @@ class _QthHelperAppState extends State<QthHelperApp> {
         //   Night — no greys allowed: near-black red bg (kNBg) + primary red text (kN1)
         tooltipTheme: TooltipThemeData(
           decoration: BoxDecoration(
-            color: _dayMode ? kDSnackBg : kNBg,
+            color: p.snackBg,
             borderRadius: BorderRadius.circular(4),
           ),
           textStyle: TextStyle(
-            color: _dayMode ? kDFg1 : kN1,
+            color: p.pick(kDFg1, kN1),
             fontSize: 12,
             fontWeight: FontWeight.w400,
           ),

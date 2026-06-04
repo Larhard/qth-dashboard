@@ -175,14 +175,47 @@ no overflow stripe, the change is safe.
 
 ### Philosophy
 
-The app uses a single shared colour palette defined entirely in
-`lib/utils/units.dart`. **No raw hex literals are permitted anywhere else in
-the codebase.** All colours are referenced by their semantic constant name.
+The app has **two palettes built on two different principles**, both defined in
+`lib/theme/palette.dart`:
+
+- **Night (`kN*`) is a pure-red brightness RAMP.** Every value has green = `0x00`
+  and blue = `0x00`; prominence is brightness alone (kN0 brightest … kN4 dimmest).
+- **Day (`kD*`) is SEMANTIC.** Hue encodes data type (green = GPS, amber = MGRS,
+  cyan = port, red = emergency, orange = nav).
+
+Because the two principles differ, the day→night mapping is **contextual**: the
+same day hue maps to whichever ramp brightness fits its prominence in that spot.
+
+**Two rules make this maintainable and safe:**
+
+1. **No raw hex literals outside `lib/theme/palette.dart`.** Enforced by a test
+   (`test/palette_test.dart` checks no `Color(0x…)` leaks; `flutter analyze`
+   would also flag an undefined constant). All colours are named constants.
+2. **Resolve colours through `Palette`, not scattered `dayMode ? .. : ..`.**
+   `Palette` (in `palette.dart`) is the SINGLE place the day/night decision for
+   each semantic role lives:
+
+   ```dart
+   final p = Palette.of(_dayMode);     // const singleton — never allocates
+   Text(name, style: TextStyle(color: p.textPrimary));   // role, not a ternary
+   color: p.emergency,                  // day kDEmg / night kN0, defined once
+   color: p.pick(kDPort, kN2),          // escape hatch for a genuine one-off
+   ```
+
+   Every colour a `Palette` returns in night mode is a `kN*` (or `Colors.black` /
+   `Colors.transparent`), so the pure-red rule is **enforced by construction** —
+   a call site physically cannot pick a non-red night colour through a role, and
+   `test/palette_test.dart` asserts every night role has g = 0, b = 0.
 
 This ensures that:
-- A single edit to one constant propagates to every screen instantly.
-- Night mode is provably pure-red (see the strict rule below).
-- Day mode has semantic meaning (green = GPS, amber = MGRS, cyan = port, etc.).
+- A single edit to one role propagates to every screen instantly.
+- Night mode is provably pure-red (verified by test, not just convention).
+- Day mode keeps its semantic meaning.
+
+Painters and small sub-widgets that already receive a `dayMode` flag may resolve
+colours inline (`dayMode ? kDx : kNy`) — they are hot, localized, and pass the
+flag explicitly; constructing a `Palette` there is unnecessary. Everywhere else,
+use a `Palette`.
 
 ### Night palette (`kN*`) — STRICT PURE RED
 
@@ -243,13 +276,64 @@ field use. A night colour of the form `#RRGGBB` is a bug unless `GG == 00` and
 ### Theme-level colours (dynamic, in `main.dart`)
 
 `QthHelperApp` is a `StatefulWidget` that listens to `GetStorage('day_mode')`
-and rebuilds the `MaterialApp` theme on every day↔night toggle. This ensures
-tooltips, ripples, and tab bars always use the correct palette regardless of
-Material 3 surface-tint defaults.
+and rebuilds the `MaterialApp` theme on every day↔night toggle. It resolves theme
+colours through a `Palette` like everywhere else. This ensures tooltips, ripples,
+and tab bars always use the correct palette regardless of Material 3 surface-tint
+defaults.
+
+### Dart and native (Kotlin) colours — one source of truth
+
+Dart and Kotlin cannot share a compile-time colour constant, but they don't need
+to: **the native side has no colour palette of its own.** The only place Kotlin
+draws coloured pixels is the floating overlay, and it receives every colour as an
+ARGB int **pushed from Dart** (resolved from `Palette` — see §9). So `palette.dart`
+remains the single source of truth at runtime; the native view is a dumb renderer.
+
+The sole exception is a handful of hard-coded fallback defaults in `OverlayView`
+used only in the brief window before Dart has pushed its first frame (or if the
+Flutter engine is dead). Those defaults MUST still obey the pure-red night rule.
+This is why full Dart↔Kotlin colour "unification" is unnecessary rather than
+infeasible: colours flow one way, Dart → native, at runtime.
 
 ---
 
 ## 5. Coding Practices
+
+### 5.0 Architecture & design patterns (the patterns to maintain)
+
+The codebase follows a small set of deliberate, conventional patterns. New work
+should fit one of these rather than invent a new structure:
+
+- **Layered architecture with a one-way dependency rule** (§6). `models → utils →
+  services → screens`; `config/theme/settings` are leaf modules everyone may read.
+  A lower layer never imports a higher one. This keeps logic testable and the UI
+  thin.
+- **Pure core, tested in isolation.** Deterministic logic (formatting, geo math,
+  GPX dedup, alarm-level spec) is extracted into `utils/` as pure functions/classes
+  with no I/O or platform channels, and unit-tested. Prefer extracting a pure
+  function over testing through a widget.
+- **Service singletons as the data/state layer.** Each `*Service` is a plain Dart
+  singleton (no `BuildContext`) owning one concern (waypoints, cities, anchor
+  presenter, overlay). Screens are the only layer touching `setState`/`Navigator`.
+- **Single authority for hardware & shared state** (§7.1). Exactly one component
+  computes a given piece of state and one drives a given piece of hardware, per
+  process. The native `AnchorController` is the alarm authority; Dart only presents.
+- **Native presenter/authority split for platform features.** Kotlin owns hardware
+  and survival (services, `AudioTrack`, wake locks); Dart presents via thin
+  `MethodChannel` bridges named `qth_helper/<feature>`. No Android SDK types leak
+  into Dart.
+- **Semantic resolver for theming** (§4). One `Palette` maps roles → colours for
+  the current mode; call sites name a role, not a `dayMode ?` ternary.
+- **Centralized tunables, guarded across the boundary** (§5.9, §5.10). Tuning knobs
+  in `config/tuning.dart` and `Tuning.kt`; cross-language shared values pinned by a
+  test.
+- **Opt-in background work only** (§5.5). No sensor/CPU/network cost unless the user
+  enabled a feature that needs it.
+
+Known debt: `home_screen.dart` is a large `StatefulWidget` (a "god widget"). It is
+the one place that does not yet fit the above cleanly — see §10 for the planned
+extraction. Do not add unrelated concerns to it; new sections belong in their own
+widget/file.
 
 ### 5.1 General
 
@@ -261,19 +345,23 @@ Material 3 surface-tint defaults.
 - All `MethodChannel` / `EventChannel` identifiers follow the format
   `qth_helper/<feature>` (e.g. `qth_helper/anchor_alarm`).
 
-### 5.2 No raw colour literals
+### 5.2 Colours: named constants, resolved through `Palette`
 
 ```dart
-// ✓ correct
-color: _dayMode ? kDGps : kN1,
+// ✓ correct — semantic role, day/night rule defined once in palette.dart
+color: p.gps,
+color: p.pick(kDPort, kN2),   // one-off the named roles don't cover
 
-// ✗ wrong — breaks the unified palette
+// ✗ wrong — raw hex literal (breaks the single palette; fails palette_test)
 color: const Color(0xFF55DD55),
+
+// ✗ avoid — scattered day/night ternary in widget code (use a Palette role)
+color: _dayMode ? kDGps : kN1,
 ```
 
-The only exception is `Colors.black`, `Colors.transparent`, `Colors.white38`
-(form hint opacity), and structural dark surfaces (`Colors.black` for Scaffold
-backgrounds) where semantic naming would be redundant.
+`Colors.black` and `Colors.transparent` are the only non-palette colours allowed
+(both satisfy the pure-red night rule). Raw hex anywhere but `palette.dart` is a
+bug caught by `test/palette_test.dart`.
 
 ### 5.3 No unnecessary abstractions
 
@@ -329,6 +417,37 @@ Any action that:
 must require a deliberate gesture (long-press or 3-second hold) that cannot
 be triggered by casual contact with the screen during driving or sailing.
 
+### 5.9 Tunable constants live in one config per language
+
+Values a developer or field operator might **adjust to tune behaviour** — GPS
+cadence, alarm thresholds, debounce windows, audio parameters, display
+thresholds — are named constants in a dedicated, feature-namespaced config:
+
+- Dart: `lib/config/tuning.dart` (`GpsTuning`, `DisplayTuning`).
+- Kotlin: `Tuning.kt` (`Tuning.Anchor`, `Tuning.Gps`, `Tuning.Audio`).
+
+This is the "design-tokens / app-config" pattern: tuning knobs are *discoverable
+and adjustable in one place* instead of buried as magic numbers in logic. The
+rule of thumb:
+
+- **Tunable knob an operator/dev would turn** → the config file.
+- **Implementation-internal constant** (only meaningful to one class, not a knob)
+  → keep it co-located with that class as a `private const` for cohesion.
+
+Never inline a magic number for a tunable value; reference the named constant.
+
+### 5.10 Cross-language constants must be guarded, not trusted
+
+Dart and Kotlin cannot share a compile-time constant. Where a value MUST agree
+across the boundary (the anchor GPS-loss timings live in both the Dart spec
+`anchor_math.dart` and the native authority `Tuning.kt`), do **not** rely on
+humans keeping them in sync — add a **guard test** that reads the other
+language's source and asserts equality (`test/tuning_sync_test.dart`). Prefer
+designing the duplication away entirely: the native side is the single runtime
+authority for the alarm, and Dart reads results from it (the snapshot) rather
+than recomputing, so the only shared values are the spec thresholds the guard
+test pins.
+
 ---
 
 ## 6. Module Structure
@@ -336,11 +455,17 @@ be triggered by casual contact with the screen during driving or sailing.
 ```
 lib/
 ├── main.dart                    # App root; stateful theme (day/night aware)
+├── config/
+│   └── tuning.dart              # Dart tunables: GPS cadence, display thresholds (§5.9)
+├── theme/
+│   └── palette.dart             # ALL colour constants (kD*/kN*) + Palette resolver (§4)
+├── settings/
+│   └── display_settings.dart    # Persisted display prefs (clock, coord/locator/heading modes)
 ├── models/
 │   ├── city.dart                # City + port data model (immutable fields)
 │   └── waypoint.dart            # Waypoint (mutable name/lat/lon, persistent ID)
 ├── screens/
-│   ├── home_screen.dart         # Primary dashboard (~2 800 lines)
+│   ├── home_screen.dart         # Primary dashboard (large; see §10 for split plan)
 │   ├── waypoints_screen.dart    # Waypoint list + GPX import/export + anchor setup
 │   ├── about_screen.dart        # Legal notices + open-source licences
 │   └── debug_screen.dart        # 4-tab sensor/GPS/heading/locator debug view
@@ -349,34 +474,41 @@ lib/
 │   ├── city_service.dart        # Spatial grid lookup (city and port datasets)
 │   ├── declination_service.dart # WMM magnetic declination via Android GeomagneticField
 │   ├── environment_service.dart # EventChannel wrapper for sensor stream
-│   ├── overlay_service.dart     # Floating-compass overlay controller (see §10)
+│   ├── overlay_service.dart     # Floating-compass overlay controller (see §9)
 │   └── waypoint_service.dart    # MOB + nav waypoints; GPX import with dedup + undo
 └── utils/
-    ├── anchor_math.dart         # Pure anchor alarm level logic (unit-tested spec)
+    ├── anchor_math.dart         # Pure anchor alarm level SPEC (unit-tested; native is authority)
     ├── coordinate_utils.dart    # DDM / DD / DMS + Maidenhead encode/decode
+    ├── formatting.dart          # Speed / distance / altitude / elapsed formatting (unit-tested)
     ├── geo_utils.dart           # Haversine distance + bearing
     ├── gpx_utils.dart           # GPX 1.1 parse (xml package) + build (XmlBuilder)
     ├── mgrs_utils.dart          # MGRS encode/decode
     ├── track_bearing.dart       # Smoothed track bearing from spatial point buffer
-    ├── units.dart               # ALL colour constants (kD*/kN*) + unit preferences
+    ├── units.dart               # Barrel: re-exports palette + formatting + display_settings
     └── waypoint_import.dart     # Pure GPX import dedup/rename planner (unit-tested)
 
 android/app/src/main/kotlin/.../
     ├── MainActivity.kt          # Flutter channels (thin bridges)
-    ├── AnchorController.kt      # Single authority: level logic + state (object)
-    ├── AnchorAlarmManager.kt    # Process-singleton hardware driver (MODE_STREAM audio)
+    ├── Tuning.kt                # Native tunables: anchor thresholds, GPS cadence, audio (§5.9)
+    ├── AnchorController.kt      # Single authority: level logic + latching state machine (object)
+    ├── AnchorAlarmManager.kt    # Process-singleton hardware driver (MODE_STATIC seamless audio)
     ├── AnchorMonitorService.kt  # Foreground service: GPS feed + notification
     ├── BootReceiver.kt          # Restarts anchor monitor after reboot
     ├── OverlayService.kt        # Foreground service hosting the floating overlay
     └── OverlayView.kt           # Native custom-View compass for the overlay
 ```
 
+`units.dart` is a backwards-compatible **barrel** — its contents were split by
+concern into `theme/palette.dart`, `utils/formatting.dart`, and
+`settings/display_settings.dart`. Prefer importing the specific file in new code.
+
 ### Module boundaries
 
 | Module | May depend on | Must not depend on |
 |---|---|---|
+| `config/`, `theme/`, `settings/` | Dart core, `flutter` (Color/GetStorage) | Services, screens, widgets |
 | `models/` | Dart core only | Services, screens, widgets |
-| `utils/` | Dart core, `xml` package | Services, models, screens |
+| `utils/` | Dart core, `xml`, `config/`/`theme/`/`settings/` | Services, models, screens |
 | `services/` | `models/`, `utils/`, `flutter/services` | Screens, widgets |
 | `screens/` | All of the above | Nothing outside `lib/` |
 
@@ -419,29 +551,31 @@ Implementation in `AnchorAlarmManager`:
 - `STREAM_ALARM` forced to max before play; `USAGE_ALARM` bypasses DND priority-only.
 - Exclusive audio focus is **held until stop()**; the focus-change listener is a
   no-op so transient focus loss never self-silences the alarm.
-- **Dual output:** one track pinned to the built-in speaker
-  (`setPreferredDevice(TYPE_BUILTIN_SPEAKER)`) so the alarm is always audible in
-  the physical space, plus — only when an external output (BT/wired/USB) is
-  connected — a companion track on the default route so headphone wearers also
-  hear it. The companion is skipped when no external output exists, to avoid
-  speaker comb-filtering.
+- **Speaker only, single source.** Exactly one `AudioTrack`, forced to the
+  built-in speaker (`setPreferredDevice(TYPE_BUILTIN_SPEAKER)`). The alarm must
+  sound in the physical space regardless of any connected headphones/BT/USB —
+  routing it (or a copy) to headphones is pointless and a source of conflicts, so
+  we never do. (An earlier dual-output design was removed for this reason.)
 
 ### 7.3 Alarm audio design
 
-- **Playback engine: `AudioTrack` in `MODE_STREAM`, fed by a dedicated
-  max-priority blocking writer thread.** This is mandatory — `MODE_STATIC` +
-  `setLoopPoints` glitches and "breaks up" on many devices (the symptom field
-  testing reported, present even during the test tone with a single track).
-  The blocking `write()` paces production and keeps the hardware buffer full, so
-  playback is seamless. One writer thread per track; `stop()` clears a `feeding`
-  flag and stops the track to unblock the thread, then joins it.
+- **Playback engine: `AudioTrack` in `MODE_STATIC`, pre-loaded and hardware-looped
+  (`setLoopPoints`).** The siren is a 2 s buffer rendered ONCE and cached; `play()`
+  starts it immediately (no warm-up lag) and there is no feeder thread that could
+  underrun (no glitches/break-up). The loop is amplitude-enveloped to zero over its
+  first/last 6 ms so the seam is click-free. The one-shot warning ping uses the
+  same pre-loaded `MODE_STATIC` path — a `MODE_STREAM` play-then-write dropped the
+  short ping to a cold-track warm-up race.
 - **Warning:** a single soft 880 Hz ping (250 ms, faded), played ONCE every 8 s —
   a gentle one-shot nudge, not a continuous tone. Audible at volume 0.
 - **Alarm:** continuous siren — two tones a **tritone (√2 ≈ 1.414) apart**
-  sweeping 400→1200 Hz, summed and hard-clipped. The tritone is the most dissonant
-  Western interval; the result is deliberately harsh. Max volume, continuous.
-- **Test:** the same alarm timbre at 20 % volume from all outputs, toggled on/off
+  wailing 400 → 1200 → 400 Hz across the loop, summed and hard-clipped. The
+  tritone is the most dissonant Western interval; the result is deliberately harsh.
+  Max volume, continuous.
+- **Test:** the same alarm timbre at 10 % volume from the speaker, toggled on/off
   by the setup-sheet button (auto-stops after 60 s).
+- All audio parameters (frequencies, loop length, volumes, intervals) are named
+  constants in `Tuning.Audio` — never inline them (§5.9).
 
 ### 7.4 Persistence & survival
 
@@ -454,25 +588,44 @@ Implementation in `AnchorAlarmManager`:
 - On alarm escalation while only the background service is alive, the service
   launches `MainActivity` (full-screen intent) so the silence UI appears.
 
-### 7.5 GPS reliability when stationary
+### 7.5 GPS reliability when stationary (CRITICAL — false alarms make it unusable)
 
-Two independent feeds keep the GPS-loss timer fresh:
-- The service's own `LocationManager` (GPS + NETWORK providers, 2 s / 0 m).
-- The foreground forwards its (fused, more reliable) geolocator fixes via
-  `forwardPosition`. The foreground stream uses `distanceFilter = 0` +
-  `intervalDuration = 3 s` while anchoring so stationary fixes are delivered.
-- `AnchorController` tracks the last-fix time on a monotonic clock; either feed
-  resets it. GPS-loss escalation: 60 s → warning, 180 s → alarm (see `AnchorMath`).
+The hard requirement: a **stationary boat with a working GPS must never raise a
+false "GPS lost" alarm**, while a genuine loss still escalates. The design that
+guarantees this:
 
-### 7.6 Level-logic duplication is intentional
+- **Liveness is decoupled from precision.** *Any* fix, at *any* accuracy, proves
+  the receiver is alive and resets the loss timer. A working GPS keeps delivering
+  fixes when stationary (measurement noise alone yields a new fix each epoch); it
+  only goes silent when the fix is genuinely lost. So "GPS lost" is decided purely
+  by liveness — no fix at all for a sustained time. (An earlier design wrongly
+  required *accurate* fixes for liveness, so an obstructed phone whose accuracy
+  drifted looked "lost" while GPS worked — the false-alarm bug.)
+- **Distance vs. liveness are separate.** Distance updates only from a fix accurate
+  to within `max(radius, 50 m)` — lenient so a real drag is never missed, but
+  clearly-broken fixes can't move it. Liveness ignores accuracy.
+- **Debounce + hysteresis.** A position level must persist (warn 4 s, alarm 8 s)
+  before escalating, so a lone spurious fix can't raise — or, since ALARM latches,
+  lock in — a false alarm.
+- **Two feeds, GPS only.** The native service runs `GPS_PROVIDER` at 1 Hz / 0 m
+  under a `PARTIAL_WAKE_LOCK` (defeats Doze); the foreground also forwards fused
+  geolocator fixes via `forwardPosition`. No `NETWORK_PROVIDER` (its coarse fixes
+  add only noise). Escalation: 60 s → warning, 180 s → alarm.
+- All thresholds are named constants in `Tuning.Anchor` (§5.9).
 
-The alarm level rules live in **two** places that MUST stay in sync:
-- `lib/utils/anchor_math.dart` (`AnchorMath`) — the canonical, unit-tested spec.
-- `android/.../AnchorController.kt` (`recompute`) — needed because the service
-  must evaluate the level when the Flutter engine is dead.
+### 7.6 The native AnchorController is the single level authority
 
-Any threshold change requires editing **both**. The Dart copy is covered by
-`test/anchor_math_test.dart`.
+Level computation lives natively in `AnchorController.kt` (latching state machine
+with hysteresis, debounce, liveness-based GPS loss, low-battery escalation). It is
+the **only** runtime authority — the Dart side reads the computed level from the
+1 Hz snapshot (`getAnchorSnapshot`) and never recomputes.
+
+`lib/utils/anchor_math.dart` (`AnchorMath`) is the pure, unit-tested **spec** of
+the core contract (position/GPS/battery → level, highest wins); the native side
+implements a superset of it. The only values shared across the language boundary
+are the GPS-loss timings, duplicated in `AnchorMath` and `Tuning.Anchor`. They are
+kept honest by `test/tuning_sync_test.dart`, which reads `Tuning.kt` and asserts
+equality (§5.10) — divergence fails the build, so it can never drift silently.
 
 ### 7.7 Battery budget for alarms
 
@@ -488,16 +641,27 @@ Any threshold change requires editing **both**. The Dart copy is covered by
 
 ## 8. Testing
 
-- Pure, deterministic logic lives in `lib/utils/` and is unit-tested with no I/O,
-  no platform channels, and no `GetStorage`. This is why duplicate-detection was
-  extracted into `WaypointImporter` and alarm levels into `AnchorMath`.
-- The test suite (`test/`) MUST stay green before any release build:
-  - `anchor_math_test.dart` — every alarm threshold + "highest level wins" (safety-critical).
-  - `geo_utils_test.dart` — haversine + bearing against known values.
-  - `gpx_utils_test.dart` — track-point exclusion, entity decoding, round-trip.
-  - `waypoint_import_test.dart` — duplicate/rename rules incl. the worked example.
-- New safety-relevant logic must ship with tests. Prefer extracting a pure
-  function over testing through a widget or platform channel.
+Tests should **assert real behaviour and invariants** and give a clear failure
+message — not chase a coverage number. The bar: a test should fail loudly if a
+change breaks something a user would notice or a safety rule the constitution
+sets. Pure, deterministic logic lives in `lib/utils/` (and `theme/`) and is tested
+with no I/O, no platform channels, no `GetStorage`. This is why pure logic is
+extracted (e.g. `WaypointImporter`, `AnchorMath`, `formatting`).
+
+The test suite (`test/`) MUST stay green before any release build:
+- `anchor_math_test.dart` — every alarm threshold + "highest level wins" (safety-critical).
+- `geo_utils_test.dart` — haversine + bearing against known values.
+- `gpx_utils_test.dart` — track-point exclusion, entity decoding, round-trip.
+- `waypoint_import_test.dart` — duplicate/rename rules incl. the worked example.
+- `palette_test.dart` — **enforces the pure-red night rule** (every night constant
+  and every `Palette` night role has g = 0, b = 0) + `Palette` resolver behaviour.
+- `formatting_test.dart` — speed/distance/altitude/elapsed unit conversions & rounding.
+- `tuning_sync_test.dart` — guards the Dart↔Kotlin shared thresholds (§5.10).
+
+New safety-relevant logic must ship with tests. Prefer extracting a pure function
+over testing through a widget or platform channel. When a rule in this document is
+machine-checkable (the night palette, the threshold sync), back it with a test so
+the rule is enforced, not just documented.
 
 ---
 
@@ -508,8 +672,10 @@ and the nearest city / anchor status stay glanceable without switching back.
 
 **Architecture (native, no second Flutter engine):**
 - `OverlayView` (Kotlin custom `View`) draws a compact compass + numeric heading
-  + two info lines. It is rendered natively — a second `FlutterEngine` would cost
-  ~30–50 MB and significant battery, which violates §5.5.
+  + one coloured info line per active POI (city / waypoint / MOB / anchor), each as
+  a croppable label plus an always-visible heading+distance value. It is rendered
+  natively — a second `FlutterEngine` would cost ~30–50 MB and significant battery,
+  which violates §5.5.
 - `OverlayService` (foreground service, `specialUse` type) hosts the window via
   `WindowManager` + `TYPE_APPLICATION_OVERLAY`, draggable, tap-to-open-app. The
   FGS keeps the process (and the data-pushing Flutter engine) alive in background.
@@ -531,11 +697,29 @@ and the nearest city / anchor status stay glanceable without switching back.
 
 ---
 
-## 10. Version history note
+## 10. Version history & refactoring direction
 
 The app started as a proof-of-concept GPS heading display and grew iteratively
 through field testing into a full maritime/radio/hiking dashboard. The architecture
-reflects this history — `home_screen.dart` is intentionally large because it
-manages a unified state machine for all navigation sensors. Future refactoring
-should extract `_HomeScreenState` sub-concerns (city, anchor, waypoint sections)
-into `StatefulWidget` subtrees before splitting into separate files.
+reflects this history.
+
+**Done:** colours/units/preferences split out of the old `units.dart` god-file
+into `theme/palette.dart` + `utils/formatting.dart` + `settings/display_settings.dart`
+(barrel kept for compatibility); a `Palette` semantic resolver replaced scattered
+`dayMode ?` colour ternaries across the screens; tunables centralized into
+`config/tuning.dart` + `Tuning.kt`; the anchor alarm consolidated to a single
+native authority with liveness-based GPS-loss and `MODE_STATIC` audio; machine-
+checkable rules (night-palette purity, cross-language threshold sync) backed by
+tests.
+
+**Next (the main remaining debt):** `home_screen.dart` is still a large
+`StatefulWidget` managing a unified state machine for all navigation sensors. The
+planned, incremental extraction (do it behind the existing tests, one concern at a
+time, never a big-bang):
+1. Pull pure helpers (heading-source selection, marker/bearing math) into `utils/`
+   so they can be unit-tested.
+2. Extract the GPS/compass/anchor lifecycle into a small controller object the
+   widget observes, separating sensor state from layout.
+3. Split the layout into per-section `StatefulWidget`s (heading, city, nav, anchor,
+   MOB), keeping the §3 no-scroll layout contract intact.
+Do not add unrelated concerns to `home_screen.dart` in the meantime.

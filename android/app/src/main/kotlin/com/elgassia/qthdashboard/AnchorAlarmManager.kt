@@ -57,7 +57,8 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
 
     private var mode = Mode.NONE
     private val handler = Handler(Looper.getMainLooper())
-    private val sampleRate = 44100
+    private val A = Tuning.Audio
+    private val sampleRate = A.SAMPLE_RATE
 
     val isTesting: Boolean get() = mode == Mode.TEST
 
@@ -107,7 +108,7 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
             if (mode != Mode.WARNING) return
             vibrateShort()
             playOnce(warningBuffer())
-            handler.postDelayed(this, 8_000L) // one gentle ping every 8 s
+            handler.postDelayed(this, A.WARNING_PING_INTERVAL_MS) // one gentle ping every 8 s
         }
     }
 
@@ -138,10 +139,10 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         if (mode == Mode.TEST) { stop(); return }
         stop()
         mode = Mode.TEST
-        startAlarmSynth(maxVolume = false, volumeScale = 0.10f)
+        startAlarmSynth(maxVolume = false, volumeScale = A.TEST_VOLUME_SCALE)
         vibrateShort()
-        // Safety auto-stop after 60 s in case the user forgets.
-        handler.postDelayed({ if (mode == Mode.TEST) stop() }, 60_000L)
+        // Safety auto-stop in case the user forgets.
+        handler.postDelayed({ if (mode == Mode.TEST) stop() }, A.TEST_AUTOSTOP_MS)
     }
 
     fun stop() {
@@ -170,11 +171,12 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         return buf
     }
 
-    /** Single 880 Hz ping, 250 ms with a smooth fade-out — gentle, one-shot. Cached. */
+    /** Single soft ping with a smooth fade-out — gentle, one-shot. Cached. */
     private var warningBuf: ShortArray? = null
-    private fun warningBuffer(): ShortArray = warningBuf ?: synthesise(250, 0.32) { t ->
-        val env = 1.0 - (t / 0.25)            // linear fade across the 250 ms
-        sin(2 * PI * 880.0 * t) * env
+    private fun warningBuffer(): ShortArray = warningBuf ?: synthesise(A.WARNING_PING_MS, A.WARNING_AMPLITUDE) { t ->
+        val durSec = A.WARNING_PING_MS / 1000.0
+        val env = 1.0 - (t / durSec)          // linear fade across the ping
+        sin(2 * PI * A.WARNING_FREQ_HZ * t) * env
     }.also { warningBuf = it }
 
     /**
@@ -192,29 +194,29 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
      */
     private fun alarmLoop(): ShortArray {
         alarmLoopBuf?.let { return it }
-        val loopSec = 2.0
+        val loopSec = A.SIREN_LOOP_SEC
         val n = (sampleRate * loopSec).toInt()
         val buf = ShortArray(n)
         val twoPi = 2 * PI
-        val fade = sampleRate * 6 / 1000          // 6 ms raised edges
+        val fade = sampleRate * A.SIREN_FADE_MS / 1000   // raised edges for a click-free seam
         var phase1 = 0.0
         var phase2 = 0.0
         for (i in 0 until n) {
             val t = i.toDouble() / sampleRate
             val sweep = 0.5 - 0.5 * Math.cos(twoPi * t / loopSec) // 0→1→0 over the loop
-            val f1 = 400.0 + 800.0 * sweep
+            val f1 = A.SIREN_FREQ_LOW_HZ + A.SIREN_FREQ_SWEEP_HZ * sweep
             phase1 += twoPi * f1 / sampleRate
-            phase2 += twoPi * (f1 * 1.4142) / sampleRate
+            phase2 += twoPi * (f1 * A.SIREN_TRITONE) / sampleRate
             if (phase1 > twoPi) phase1 -= twoPi
             if (phase2 > twoPi) phase2 -= twoPi
             var s = Math.sin(phase1) + Math.sin(phase2)
-            if (s > 0.9) s = 0.9 else if (s < -0.9) s = -0.9
+            if (s > A.SIREN_CLIP) s = A.SIREN_CLIP else if (s < -A.SIREN_CLIP) s = -A.SIREN_CLIP
             val env = when {
                 i < fade      -> i.toDouble() / fade
                 i >= n - fade -> (n - i).toDouble() / fade
                 else          -> 1.0
             }
-            buf[i] = (s * env * 0.9 * Short.MAX_VALUE).roundToInt().toShort()
+            buf[i] = (s * env * A.SIREN_AMPLITUDE * Short.MAX_VALUE).roundToInt().toShort()
         }
         alarmLoopBuf = buf
         return buf

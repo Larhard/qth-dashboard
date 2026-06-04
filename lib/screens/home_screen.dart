@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
+import '../config/tuning.dart';
 import '../models/waypoint.dart';
 import '../services/city_service.dart';
 import '../services/declination_service.dart';
@@ -35,10 +36,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-  // ── Constants ─────────────────────────────────────────────────────────────
-  static const _gpsThresholdMs = 1.5;    // m/s ≈ 5.4 km/h
-  static const _compassIntervalMs = 100; // ~10 Hz — slightly lower than before
-  static const _cityRecalcThresholdM = 100.0;
+  // ── Constants ───────────────────────────────────────────────────────────
+  // Tunable values live in lib/config/tuning.dart; these are local aliases so
+  // call sites stay terse.  Adjust the value in tuning.dart, not here.
+  static const _gpsThresholdMs = GpsTuning.gpsHeadingMinSpeed;
+  static const _compassIntervalMs = DisplayTuning.compassMinIntervalMs;
+  static const _cityRecalcThresholdM = DisplayTuning.cityRecalcThresholdM;
 
   // ── GPS / compass streams ─────────────────────────────────────────────────
   StreamSubscription<Position>? _posSub;
@@ -116,7 +119,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── MOB hold-to-clear ─────────────────────────────────────────────────────
   // Driven by a real Stopwatch — immune to ticker mute/unmute jumps.
-  static const _holdToClearMs = 3000;
+  static const _holdToClearMs = DisplayTuning.holdToClearMs;
   static const _rewindPerFrame = 0.05;
   late final Ticker _holdTicker;
   final Stopwatch _holdWatch = Stopwatch();
@@ -162,6 +165,8 @@ class _HomeScreenState extends State<HomeScreen>
   // Night: red-only palette — preserves rhodopsin (night-vision accommodation)
   //        by emitting only long-wavelength light.  No greens, blues, or ambers.
   bool _dayMode = GetStorage().read<bool>('day_mode') ?? true;
+  /// Semantic colour resolver for the current mode (see lib/theme/palette.dart).
+  Palette get _pal => Palette.of(_dayMode);
 
   // ── Night palette target: 4 levels of dim red, no other colours ─────────────
   //   Primary   0xFFCC3333  — main data (heading degrees, coordinates)
@@ -170,19 +175,19 @@ class _HomeScreenState extends State<HomeScreen>
   //   Ghost     0xFF441111  — barely-there (dividers, secondary arrow, borders)
 
   // Text hierarchy
-  Color get _cText1 => _dayMode ? kDFg0 : kN1;
-  Color get _cText2 => _dayMode ? kDFg1 : kN2;
-  Color get _cText3 => _dayMode ? kDFg2 : kN3;
+  Color get _cText1 => _pal.textPrimary;
+  Color get _cText2 => _pal.textSecondary;
+  Color get _cText3 => _pal.pick(kDFg2, kN3);
   // Element-specific
-  Color get _cSpeed   => _dayMode ? kDFg2   : kN2;
-  Color get _cAltAcc  => _dayMode ? kDFg2   : kN2;
-  Color get _cStale   => _dayMode ? kDStale : kN1;
+  Color get _cSpeed   => _pal.textTertiary;
+  Color get _cAltAcc  => _pal.textTertiary;
+  Color get _cStale   => _pal.stale;
   // IARU locator — green (same family as GPS heading and UTC clock)
-  Color get _cLocator      => _dayMode ? kDGps  : kN2;
-  Color get _cLocatorLabel => _dayMode ? kDGpsL : kN3;
+  Color get _cLocator      => _pal.pick(kDGps, kN2);
+  Color get _cLocatorLabel => _pal.gpsLabel;
   // MGRS — amber-orange family
-  Color get _cMgrs      => _dayMode ? kDAmb  : kN2;
-  Color get _cMgrsLabel => _dayMode ? kDAmbs : kN3;
+  Color get _cMgrs      => _pal.amber;
+  Color get _cMgrsLabel => _pal.amberLabel;
   // Clock: UTC shares GPS green; local time shares MGRS amber
   Color get _cTime => _dayMode
       ? (_timeUtc ? kDGps : kDAmb)
@@ -191,16 +196,16 @@ class _HomeScreenState extends State<HomeScreen>
       ? (_timeUtc ? kDGpsL : kDAmbs)
       : kN3;
   // GPS-lock toggle indicator
-  Color get _cSaveLock => _dayMode ? kDAmb  : kN3;
-  Color get _cLiveLock => _dayMode ? kDPort : kN1;
+  Color get _cSaveLock => _pal.pick(kDAmb, kN3);
+  Color get _cLiveLock => _pal.port;
   // Active waypoint / MOB card — red emergency family
-  Color get _cWptName   => _dayMode ? kDEmg  : kN1;
-  Color get _cWptArrow  => _dayMode ? kDEmg  : kN1;
-  Color get _cWptData   => _dayMode ? kDEmg  : kN2;
-  Color get _cWptCoords => _dayMode ? kDEmgS : kN2;
+  Color get _cWptName   => _pal.pick(kDEmg, kN1);
+  Color get _cWptArrow  => _pal.pick(kDEmg, kN1);
+  Color get _cWptData   => _pal.pick(kDEmg, kN2);
+  Color get _cWptCoords => _pal.pick(kDEmgS, kN2);
   // MOB button
-  Color get _cMobBg   => _dayMode ? kDEmgBg : kN3;
-  Color get _cMobText => _dayMode ? kDFg0   : kN1;
+  Color get _cMobBg   => _pal.pick(kDEmgBg, kN3);
+  Color get _cMobText => _pal.textPrimary;
 
   void _toggleDayMode() {
     HapticFeedback.mediumImpact();
@@ -275,9 +280,9 @@ class _HomeScreenState extends State<HomeScreen>
   // GPS=green (kDGps), TRK=yellow (kDTrk), MAG=white (kDFg0).
   // Night: all shift to reds with distinct brightness.
   Color get _headingColor => switch (_primarySourceId) {
-    _srcGps => _dayMode ? kDGps : kN1,
-    _srcTrk => _dayMode ? kDTrk : kN2,
-    _       => _dayMode ? kDFg0 : kN2,
+    _srcGps => _pal.gps,
+    _srcTrk => _pal.trk,
+    _       => _pal.pick(kDFg0, kN2),
   };
 
   String get _sourceLabel => switch (_primarySourceId) {
@@ -288,13 +293,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   Color get _secondaryHeadingColor {
     if (_headingSourceMode == HeadingSourceMode.auto) {
-      return _dayMode ? kDFg0 : kN3; // MAG secondary — dimmer than primary
+      return _pal.pick(kDFg0, kN3); // MAG secondary — dimmer than primary
     }
     // magOnly: secondary is TRK or GPS
     if (_track.bearing != null) {
-      return _dayMode ? kDTrk : kN3; // TRK secondary
+      return _pal.pick(kDTrk, kN3); // TRK secondary
     }
-    return _dayMode ? kDGps : kN3;   // GPS secondary
+    return _pal.pick(kDGps, kN3);   // GPS secondary
   }
 
   // City accent colours — each tier has a distinct hue; night collapses to red.
@@ -438,7 +443,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     // Re-check the charger state every ~30 s so the nav power profile adapts even
     // during a long screen-on session (e.g. the user plugs in mid-drive).
-    if (++_powerTick % 30 == 0) _refreshChargingProfile();
+    if (++_powerTick % GpsTuning.chargerRecheckTicks == 0) _refreshChargingProfile();
 
     // Anchor-only work (zero overhead when not anchoring).
     if (AnchorService.instance.isActive) {
@@ -449,7 +454,9 @@ class _HomeScreenState extends State<HomeScreen>
       // GPS keep-alive — request a fresh single-fix if updates have stalled.
       // (Battery and GPS-loss are monitored natively in AnchorMonitorService so
       // they work even when the app is closed.)
-      if (sec > 0 && sec % 20 == 0) _requestImmediateGpsFix();
+      if (sec > 0 && sec % GpsTuning.keepAliveFixAfterStaleSec == 0) {
+        _requestImmediateGpsFix();
+      }
     }
   }
 
@@ -489,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (!_usingGps && mounted) {
         final delta = (corrected - _lastRenderedCompassHeading).abs();
         final wrapped = delta > 180 ? 360 - delta : delta; // handle 359°→1° wrap
-        if (wrapped >= 0.5) {
+        if (wrapped >= DisplayTuning.compassRedrawMinDeltaDeg) {
           _lastRenderedCompassHeading = corrected;
           setState(() {});
         }
@@ -509,9 +516,10 @@ class _HomeScreenState extends State<HomeScreen>
     // so its GPS-loss timer is reset by the most reliable source available.
     AnchorService.instance.forwardPosition(pos.latitude, pos.longitude, pos.accuracy);
 
-    // GPS course is usable above ~0.5 m/s; cache at lower threshold so the
-    // secondary arrow appears even at walking pace.
-    if (pos.speed >= 0.5 && !pos.heading.isNaN && pos.heading >= 0) {
+    // GPS course is usable above the TRK threshold; cache it so the secondary
+    // arrow appears even at walking pace.
+    if (pos.speed >= GpsTuning.trkHeadingMinSpeed &&
+        !pos.heading.isNaN && pos.heading >= 0) {
       _lastValidGpsHeading = pos.heading;
     }
 
@@ -562,10 +570,14 @@ class _HomeScreenState extends State<HomeScreen>
     final anchoring = AnchorService.instance.isActive;
     return AndroidSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: anchoring ? 0 : (_charging ? 2 : 8),
+      distanceFilter: anchoring
+          ? GpsTuning.anchorDistanceFilterM
+          : (_charging
+              ? GpsTuning.navDistanceFilterChargingM
+              : GpsTuning.navDistanceFilterBatteryM),
       intervalDuration: anchoring
-          ? const Duration(seconds: 3)
-          : (_charging ? const Duration(seconds: 8) : const Duration(seconds: 20)),
+          ? GpsTuning.anchorInterval
+          : (_charging ? GpsTuning.navIntervalCharging : GpsTuning.navIntervalBattery),
       foregroundNotificationConfig: fg,
     );
   }
@@ -731,8 +743,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showSettingSnack(String message) {
-    final bg = _dayMode ? kDSnackBg : kNBg;
-    final fg = _dayMode ? kDFg1     : kN2;
+    final bg = _pal.snackBg;
+    final fg = _pal.textSecondary;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message, style: TextStyle(color: fg, fontSize: 13, height: 1.5)),
@@ -845,8 +857,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showSnack(String msg, {Duration duration = const Duration(milliseconds: 2000)}) {
-    final bg = _dayMode ? kDSnackBg : kNBg;
-    final fg = _dayMode ? kDFg1     : kN2;
+    final bg = _pal.snackBg;
+    final fg = _pal.textSecondary;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: TextStyle(color: fg, fontSize: 13), maxLines: 2),
       backgroundColor: bg,
@@ -910,9 +922,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() {});
     // Show undo action so the user can reverse an accidental open-with import.
     if (r.added > 0 && mounted) {
-      final bg  = _dayMode ? kDSnackBg : kNBg;
-      final fg  = _dayMode ? kDFg1     : kN2;
-      final act = _dayMode ? kDFg0     : kN0;
+      final bg  = _pal.snackBg;
+      final fg  = _pal.textSecondary;
+      final act = _pal.pick(kDFg0, kN0);
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
         ..showSnackBar(SnackBar(
@@ -982,13 +994,13 @@ class _HomeScreenState extends State<HomeScreen>
       if (nav != null) {
         final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
         final dk = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
-        addLine(nav.name, bd(b, dk), _dayMode ? kDNav : kN1);
+        addLine(nav.name, bd(b, dk), _pal.nav);
       }
       final mob = WaypointService.instance.emergency;
       if (mob != null) {
         final b = bearing(pos.latitude, pos.longitude, mob.lat, mob.lon);
         final dk = haversineKm(pos.latitude, pos.longitude, mob.lat, mob.lon);
-        addLine('MOB', bd(b, dk), _dayMode ? kDEmg : kN0);
+        addLine('MOB', bd(b, dk), _pal.emergency);
       }
     }
 
@@ -1012,10 +1024,10 @@ class _HomeScreenState extends State<HomeScreen>
       secondaryBearing: secondary,
       primaryColor: _headingColor,          // GPS/TRK/MAG colour, as on the dashboard
       secondaryColor: _secondaryHeadingColor,
-      northColor: _dayMode ? kDEmg : kN0,
-      ringColor: _dayMode ? kDFg0 : kN2,
-      bgColor: (_dayMode ? Colors.black : kNBg).withValues(alpha: 0.92),
-      textColor: _dayMode ? kDFg0 : kN1,
+      northColor: _pal.emergency,
+      ringColor: _pal.pick(kDFg0, kN2),
+      bgColor: (_pal.tileBg).withValues(alpha: 0.92),
+      textColor: _pal.textPrimary,
       lineLabels: lineLabels,
       lineValues: lineValues,
       lineColors: lineColors,
@@ -1083,9 +1095,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Anchor card colours ───────────────────────────────────────────────────
   Color _anchorLevelColor(AnchorAlarmLevel lvl) => switch (lvl) {
-    AnchorAlarmLevel.alarm   => _dayMode ? kDEmg  : kN0,
-    AnchorAlarmLevel.warning => _dayMode ? kDStale : kN1,
-    AnchorAlarmLevel.idle    => _dayMode ? kDPort  : kN2,
+    AnchorAlarmLevel.alarm   => _pal.emergency,
+    AnchorAlarmLevel.warning => _pal.stale,
+    AnchorAlarmLevel.idle    => _pal.pick(kDPort, kN2),
   };
 
   Widget _anchorCard(bool portrait) {
@@ -1176,8 +1188,8 @@ class _HomeScreenState extends State<HomeScreen>
       builder: (_, __) {
         final bright = _strobeCtrl.value > 0.5;
         final bg = bright
-            ? (_dayMode ? Colors.white              : Colors.black)
-            : (_dayMode ? kDEmg.withValues(alpha:0.9): kN0);
+            ? (_pal.pick(Colors.white, Colors.black))
+            : _pal.pick(kDEmg.withValues(alpha: 0.9), kN0);
         return Positioned.fill(
           child: Container(
             color: bg,
@@ -1186,15 +1198,15 @@ class _HomeScreenState extends State<HomeScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.anchor, size: 72, color: bright
-                      ? (_dayMode ? kDEmg : kN0)
-                      : (_dayMode ? Colors.white : Colors.black)),
+                      ? (_pal.emergency)
+                      : (_pal.pick(Colors.white, Colors.black))),
                   const SizedBox(height: 16),
                   Text('ANCHOR ALARM',
                       style: TextStyle(
                         fontSize: 32, fontWeight: FontWeight.w900,
                         color: bright
-                            ? (_dayMode ? kDEmg : kN0)
-                            : (_dayMode ? Colors.white : Colors.black),
+                            ? (_pal.emergency)
+                            : (_pal.pick(Colors.white, Colors.black)),
                         letterSpacing: 4,
                       )),
                   const SizedBox(height: 8),
@@ -1208,8 +1220,8 @@ class _HomeScreenState extends State<HomeScreen>
                     style: TextStyle(
                       fontSize: 18,
                       color: bright
-                          ? (_dayMode ? kDEmg : kN0)
-                          : (_dayMode ? Colors.white : Colors.black),
+                          ? (_pal.emergency)
+                          : (_pal.pick(Colors.white, Colors.black)),
                     ),
                   ),
                   const SizedBox(height: 48),
@@ -1221,8 +1233,8 @@ class _HomeScreenState extends State<HomeScreen>
                   Text('Open Waypoints screen to lift anchor.',
                       style: TextStyle(fontSize: 12,
                           color: bright
-                              ? (_dayMode ? kDEmg.withValues(alpha: 0.55) : kN3)
-                              : (_dayMode ? Colors.white38 : kN4))),
+                              ? _pal.pick(kDEmg.withValues(alpha: 0.55), kN3)
+                              : (_pal.pick(Colors.white38, kN4)))),
                 ],
               ),
             ),
@@ -1236,8 +1248,8 @@ class _HomeScreenState extends State<HomeScreen>
   /// the alarm is muted only after a continuous 3-second hold.
   Widget _muteHoldButton(bool bright) {
     final fg = bright
-        ? (_dayMode ? kDEmg : kN0)
-        : (_dayMode ? Colors.white : Colors.black);
+        ? (_pal.emergency)
+        : (_pal.pick(Colors.white, Colors.black));
     return Listener(
       onPointerDown: (_) => _muteCtrl.forward(from: _muteCtrl.value),
       onPointerUp: (_) => _muteCtrl.reverse(),
@@ -1324,7 +1336,7 @@ class _HomeScreenState extends State<HomeScreen>
                 height: 80,
                 child: Stack(alignment: Alignment.center, children: [
                   ArrowWidget(bearingDeg: _compassHeading,
-                      color: _dayMode ? kDFg0 : kN2, size: 80),
+                      color: _pal.pick(kDFg0, kN2), size: 80),
                 ]),
               ),
               const SizedBox(height: 6),
@@ -1332,18 +1344,18 @@ class _HomeScreenState extends State<HomeScreen>
                   style: TextStyle(
                       fontSize: 52,
                       fontWeight: FontWeight.w900,
-                      color: _dayMode ? kDFg0 : kN2,
+                      color: _pal.pick(kDFg0, kN2),
                       height: 1.0)),
               Text('MAG',
                   style: TextStyle(
-                      color: _dayMode ? kDFg3 : kN3,
+                      color: _pal.textDim,
                       fontSize: 12, letterSpacing: 2.5)),
               const SizedBox(height: 32),
             ],
-            CircularProgressIndicator(color: _dayMode ? kDFg4 : kN4),
+            CircularProgressIndicator(color: _pal.textFaint),
             const SizedBox(height: 20),
             Text('Acquiring GPS…',
-                style: TextStyle(color: _dayMode ? kDFg3 : kN3, fontSize: 18)),
+                style: TextStyle(color: _pal.textDim, fontSize: 18)),
           ]),
         ),
       );
@@ -1355,7 +1367,7 @@ class _HomeScreenState extends State<HomeScreen>
             padding: const EdgeInsets.all(32),
             child: Text(msg,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _dayMode ? kDFg2 : kN2, fontSize: 18)),
+                style: TextStyle(color: _pal.textTertiary, fontSize: 18)),
           ),
         ),
       );
@@ -1391,7 +1403,7 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         Icons.pin_drop_outlined,
                         size: 22,
-                        color: _dayMode ? kDFg3 : kN3,
+                        color: _pal.textDim,
                       ),
                     ),
                   ),
@@ -1420,7 +1432,7 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         Icons.bug_report_outlined,
                         size: 22,
-                        color: _dayMode ? kDFoc : kN4,
+                        color: _pal.focus,
                       ),
                     ),
                   ),
@@ -1445,7 +1457,7 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         _dayMode ? Icons.nightlight_round : Icons.wb_sunny_outlined,
                         size: 22,
-                        color: _dayMode ? kDFg3 : kN2,
+                        color: _pal.pick(kDFg3, kN2),
                       ),
                     ),
                   ),
@@ -1535,7 +1547,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (nav == null) return const SizedBox.shrink();
     final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
     final d = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
-    final navColor = _dayMode ? kDNav : kN1;
+    final navColor = _pal.nav;
     return GestureDetector(
       onLongPress: () => _openWaypoints(),
       behavior: HitTestBehavior.opaque,
@@ -1666,7 +1678,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Color get _cDivider => _dayMode ? kDDiv : kNDiv;
+  Color get _cDivider => _pal.divider;
 
   Widget _divider() => Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1720,7 +1732,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (navWp != null) {
       // Day: deep orange-red — clearly distinct from city oranges/amber/lime.
     // Night: medium red (consistent with palette).
-    final navColor = _dayMode ? kDNav : kN1;
+    final navColor = _pal.nav;
       result.add((
         bearingDeg: bearing(pos.latitude, pos.longitude, navWp.lat, navWp.lon),
         color: navColor,
@@ -1733,7 +1745,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (mob != null) {
       result.add((
         bearingDeg: bearing(pos.latitude, pos.longitude, mob.lat, mob.lon),
-        color: _dayMode ? kDEmg : kN0,
+        color: _pal.emergency,
         sizeScale: 1.45,
       ));
     }
@@ -2168,7 +2180,7 @@ class _HomeScreenState extends State<HomeScreen>
     HapticFeedback.lightImpact();
     showModalBottomSheet(
       context: context,
-      backgroundColor: _dayMode ? kDSheetBg : kNSheet,
+      backgroundColor: _pal.sheetBg,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
       isScrollControlled: true,
@@ -2307,8 +2319,8 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _navWptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final navColor = _dayMode ? kDNav : kN1;
-    final navSub   = _dayMode ? kDNavL : kN3;
+    final navColor = _pal.nav;
+    final navSub   = _pal.navLabel;
     final arrowSz  = portrait ? 50.0 : 36.0;
     final dataFz   = portrait ? 22.0 : 16.0;
     // Same hold-to-deactivate animation as MOB, targeting _WptHoldTarget.nav.
@@ -2812,7 +2824,7 @@ class _CityDetailSheet extends StatelessWidget {
     if (dayMode) {
       return switch (s) {
         'E' => kDGps,              // excellent — bright green
-        'G' => const Color(0xFF9CCC65), // good — mid green (between kDGps and kDTrk)
+        'G' => kDShelterGood, // good — mid green (between kDGps and kDTrk)
         'F' => kDCityP,            // fair — amber warning
         'P' => kDStale,            // poor — orange-red
         _   => _cValue,

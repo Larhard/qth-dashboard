@@ -68,26 +68,14 @@ object AnchorController {
     /** Service sets this to launch the activity when the alarm is first raised. */
     var onAlarmEscalated: (() -> Unit)? = null
 
-    // Tunables
-    private const val GPS_NOFIX_GRACE_S = 10     // brief gaps are normal; ignore them
-    private const val GPS_WARN_S = 60            // no fix this long → warning
-    private const val GPS_ALARM_S = 180          // no fix this long → alarm
-    private const val BATT_WARN_PCT = 20
-    private const val BATT_ALARM_PCT = 7
-    // Distance accuracy gate: a fix may move the distance only if its accuracy is
-    // within max(radius, FLOOR).  Lenient on purpose — rejecting good-enough fixes
-    // would risk MISSING a real drag.  Clearly-broken fixes are still rejected.
-    private const val POS_GATE_FLOOR_M = 50.0
-    // Debounce: the out-of-range condition must persist this long before escalating,
-    // so a lone spurious fix can't raise (and, for ALARM, latch) a false alarm.
-    private const val POS_WARN_DEBOUNCE_MS = 4_000L
-    private const val POS_ALARM_DEBOUNCE_MS = 8_000L
+    // All tunables live in Tuning.Anchor (see Tuning.kt).
+    private val T = Tuning.Anchor
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     fun start(ctx: Context, lat: Double, lon: Double, radiusM: Double, warnFrac: Double) {
         alarm = AnchorAlarmManager.getInstance(ctx)
-        val coercedRadius = radiusM.coerceIn(10.0, 1000.0)
+        val coercedRadius = radiusM.coerceIn(T.RADIUS_MIN_M, T.RADIUS_MAX_M)
         // start() is delivered TWICE for one drop — once in-process by MainActivity
         // (so the alarm arms instantly) and once by the service (for survival).  If
         // we're already monitoring this very anchor, keep the LIVE state: re-running
@@ -98,7 +86,7 @@ object AnchorController {
             Math.abs(this.radiusM - coercedRadius) < 0.5
         this.lat = lat; this.lon = lon
         this.radiusM = coercedRadius
-        this.warnFrac = warnFrac.coerceIn(0.50, 0.95)
+        this.warnFrac = warnFrac.coerceIn(T.WARN_FRAC_MIN, T.WARN_FRAC_MAX)
         if (sameAnchor) { active = true; onStateChanged?.invoke(); return }
         active = true
         distanceM = 0.0; bearingDeg = 0.0
@@ -132,7 +120,7 @@ object AnchorController {
     fun onPosition(lat: Double, lon: Double, accuracyM: Double = -1.0) {
         if (!active) return
         lastFixElapsed = SystemClock.elapsedRealtime()
-        val gate = max(radiusM, POS_GATE_FLOOR_M)
+        val gate = max(radiusM, T.POS_GATE_FLOOR_M)
         if (accuracyM < 0 || accuracyM <= gate) {
             val d = FloatArray(2)
             Location.distanceBetween(lat, lon, this.lat, this.lon, d)
@@ -154,7 +142,7 @@ object AnchorController {
     fun tick() {
         if (!active) return
         val noFix = ((SystemClock.elapsedRealtime() - lastFixElapsed) / 1000L).toInt()
-        gpsLostSeconds = if (noFix > GPS_NOFIX_GRACE_S) noFix else 0
+        gpsLostSeconds = if (noFix > T.GPS_NOFIX_GRACE_S) noFix else 0
         evaluate()
     }
 
@@ -188,13 +176,13 @@ object AnchorController {
         if (!active) return
         val posEff = positionLevelDebounced()
         val gpsLevel = when {
-            gpsLostSeconds >= GPS_ALARM_S -> 2
-            gpsLostSeconds >= GPS_WARN_S  -> 1
+            gpsLostSeconds >= T.GPS_ALARM_S -> 2
+            gpsLostSeconds >= T.GPS_WARN_S  -> 1
             else -> 0
         }
         val battLevel = when {
-            !charging && batteryPct in 0..BATT_ALARM_PCT -> 2
-            !charging && batteryPct in 0..BATT_WARN_PCT  -> 1
+            !charging && batteryPct in 0..T.BATT_ALARM_PCT -> 2
+            !charging && batteryPct in 0..T.BATT_WARN_PCT  -> 1
             else -> 0
         }
         val cond = maxOf(posEff, gpsLevel, battLevel)
@@ -233,8 +221,8 @@ object AnchorController {
         posAlarmSinceMs = if (raw >= 2) (if (posAlarmSinceMs == 0L) now else posAlarmSinceMs) else 0L
         posWarnSinceMs  = if (raw >= 1) (if (posWarnSinceMs  == 0L) now else posWarnSinceMs)  else 0L
         val eff = when {
-            posAlarmSinceMs != 0L && now - posAlarmSinceMs >= POS_ALARM_DEBOUNCE_MS -> 2
-            posWarnSinceMs  != 0L && now - posWarnSinceMs  >= POS_WARN_DEBOUNCE_MS  -> 1
+            posAlarmSinceMs != 0L && now - posAlarmSinceMs >= T.POS_ALARM_DEBOUNCE_MS -> 2
+            posWarnSinceMs  != 0L && now - posWarnSinceMs  >= T.POS_WARN_DEBOUNCE_MS  -> 1
             else -> 0
         }
         posLevel = eff   // feed back into the hysteresis thresholds
@@ -247,7 +235,7 @@ object AnchorController {
      */
     private fun rawPositionLevel(): Int {
         if (!hasFix) return 0
-        val margin = max(5.0, radiusM * 0.05)
+        val margin = max(T.HYSTERESIS_MIN_M, radiusM * T.HYSTERESIS_FRAC)
         val alarmThresh = if (posLevel >= 2) radiusM - margin else radiusM
         val warnThresh  = if (posLevel >= 1) radiusM * warnFrac - margin else radiusM * warnFrac
         return when {

@@ -51,11 +51,12 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   bool get _inSelectMode => _selectModeActive;
 
   bool get _day => widget.dayMode;
-  Color get _cPrimary  => _day ? kDFg0 : kN1;
-  Color get _cSecond   => _day ? kDFg2 : kN2;
-  Color get _cTertiary => _day ? kDFg3 : kN3;
-  Color get _cDim      => _day ? kDFg4 : kN3;
-  Color get _cDistText => _day ? kDFg3 : kN3;
+  Palette get _pal => Palette.of(_day);
+  Color get _cPrimary  => _pal.textPrimary;
+  Color get _cSecond   => _pal.textTertiary;
+  Color get _cTertiary => _pal.textDim;
+  Color get _cDim      => _pal.pick(kDFg4, kN3);
+  Color get _cDistText => _pal.textDim;
   Color _locColor(LocatorType t) => !_day
       ? kN2
       : t == LocatorType.maidenhead ? kDGps : kDAmb;
@@ -81,8 +82,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
 
   // ── Snackbar helper (mirrors _HomeScreenState style) ─────────────────────
   void _snack(String msg, {Duration duration = const Duration(milliseconds: 2200)}) {
-    final bg = _day ? kDSnackBg : kNBg;
-    final fg = _day ? kDFg1     : kN2;
+    final bg = _pal.snackBg;
+    final fg = _pal.textSecondary;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: TextStyle(color: fg, fontSize: 13), maxLines: 3),
       backgroundColor: bg,
@@ -176,9 +177,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   }
 
   void _snackWithUndo(String msg, int added) {
-    final bg  = _day ? kDSnackBg : kNBg;
-    final fg  = _day ? kDFg1     : kN2;
-    final act = _day ? kDFg0     : kN0;
+    final bg  = _pal.snackBg;
+    final fg  = _pal.textSecondary;
+    final act = _pal.pick(kDFg0, kN0);
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(
@@ -240,7 +241,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               proxyDecorator: (child, index, animation) => Material(
                 color: Colors.black,
                 elevation: 4,
-                shadowColor: (_day ? kDDiv : kNDiv).withValues(alpha: 0.5),
+                shadowColor: (_pal.divider).withValues(alpha: 0.5),
                 child: child,
               ),
               onReorderItem: (oldIndex, newIndex) {
@@ -298,7 +299,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           child: Icon(
             Icons.anchor,
             color: AnchorService.instance.isActive
-                ? (_day ? kDPort : kN1)
+                ? (_pal.port)
                 : _cTertiary,
             size: 24,
           ),
@@ -320,15 +321,15 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         PopupMenuItem<String>(
           value: value,
           child: Row(children: [
-            Icon(icon, size: 18, color: color ?? (_day ? kDFg2 : kN2)),
+            Icon(icon, size: 18, color: color ?? (_pal.textTertiary)),
             const SizedBox(width: 12),
-            Text(label, style: TextStyle(color: color ?? (_day ? kDFg1 : kN2))),
+            Text(label, style: TextStyle(color: color ?? (_pal.textSecondary))),
           ]),
         );
     return PopupMenuButton<String>(
       icon: Icon(Icons.more_vert, color: _cTertiary),
       tooltip: 'More',
-      color: _day ? kDSheetBg : kNSheet,
+      color: _pal.sheetBg,
       onSelected: (v) {
         switch (v) {
           case 'import': _importGpx();
@@ -345,7 +346,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         item('overlay',
             overlayOn ? Icons.picture_in_picture_alt : Icons.picture_in_picture_alt_outlined,
             overlayOn ? 'Floating compass: ON' : 'Floating compass',
-            color: overlayOn ? (_day ? kDPort : kN1) : null),
+            color: overlayOn ? (_pal.port) : null),
         item('about', Icons.info_outline, 'About & Legal'),
       ],
     );
@@ -380,7 +381,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         onPressed: _exportGpx,
       ),
       if (_selected.isNotEmpty) IconButton(
-        icon: Icon(Icons.delete_outline, color: _day ? kDStale : kN1),
+        icon: Icon(Icons.delete_outline, color: _pal.stale),
         tooltip: 'Delete selected',
         onPressed: _deleteSelected,
       ),
@@ -408,15 +409,15 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final isSelected  = _selected.contains(wp.id);
     final isNew       = WaypointService.instance.newlyAddedIds.contains(wp.id);
     final isDupFound  = WaypointService.instance.dupFoundIds.contains(wp.id);
-    final inkColor = (_day ? kDFg0 : kN2).withValues(alpha: 0.12);
+    final inkColor = (_pal.pick(kDFg0, kN2)).withValues(alpha: 0.12);
     return DecoratedBox(
       key: key,
       decoration: BoxDecoration(
-        color: isSelected ? (_day ? kDFg3.withValues(alpha: 0.12) : kN3.withValues(alpha: 0.18)) : null,
+        color: isSelected ? _pal.pick(kDFg3.withValues(alpha: 0.12), kN3.withValues(alpha: 0.18)) : null,
         border: Border(
-          bottom: BorderSide(color: _day ? kDDiv : kNDiv, width: 1),
-          left: isNew      ? BorderSide(color: _day ? kDGps  : kN0, width: 3)
-               : isDupFound ? BorderSide(color: _day ? kDAmb  : kN2, width: 3)
+          bottom: BorderSide(color: _pal.divider, width: 1),
+          left: isNew      ? BorderSide(color: _pal.pick(kDGps, kN0), width: 3)
+               : isDupFound ? BorderSide(color: _pal.amber, width: 3)
                : BorderSide.none,
         ),
       ),
@@ -434,7 +435,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               checkColor: Colors.black,
               fillColor: WidgetStateProperty.resolveWith((s) =>
                   s.contains(WidgetState.selected)
-                      ? (_day ? kDFg0 : kN1)
+                      ? (_pal.textPrimary)
                       : Colors.transparent),
             )
           : Icon(
@@ -442,8 +443,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                   ? Icons.warning_rounded
                   : isActive ? Icons.navigation : Icons.location_on_outlined,
               color: isEmergency
-                  ? (_day ? kDEmg : kN0)
-                  : isActive ? (_day ? kDNav : kN0) : _cDim,
+                  ? (_pal.emergency)
+                  : isActive ? (_pal.pick(kDNav, kN0)) : _cDim,
               size: 22,
             ),
       title: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
@@ -451,16 +452,16 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           wp.name,
           style: TextStyle(
             color: isEmergency
-                ? (_day ? kDEmg : kN0)
+                ? (_pal.emergency)
                 : isActive
-                    ? (_day ? kDNav : kN0)
+                    ? (_pal.pick(kDNav, kN0))
                     : _cPrimary,
             fontWeight: (isEmergency || isActive) ? FontWeight.w700 : FontWeight.w400,
             fontSize: 16,
           ),
         )),
-        if (isNew)      ...[const SizedBox(width: 6), _importBadge('NEW',  _day ? kDGps : kN0)],
-        if (isDupFound) ...[const SizedBox(width: 6), _importBadge('DUPE', _day ? kDAmb : kN2)],
+        if (isNew)      ...[const SizedBox(width: 6), _importBadge('NEW',  _pal.pick(kDGps, kN0))],
+        if (isDupFound) ...[const SizedBox(width: 6), _importBadge('DUPE', _pal.amber)],
       ]),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -570,7 +571,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: _day ? kDSheetBg : kNSheet,
+      backgroundColor: _pal.sheetBg,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
       builder: (ctx) => StatefulBuilder(
@@ -583,36 +584,36 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             children: [
               Text(isActive ? 'Anchor settings' : 'Drop anchor',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
-                      color: _day ? kDFg0 : kN1)),
+                      color: _pal.textPrimary)),
               const SizedBox(height: 4),
               Text(
                 isActive
                     ? 'Drag will adjust alarm thresholds. GPS-on-lock stays active.'
                     : 'Anchor will be placed at your current GPS position.\n'
                       'GPS-on-lock is automatically enabled while anchored.',
-                style: TextStyle(fontSize: 12, color: _day ? kDFg3 : kN3, height: 1.5),
+                style: TextStyle(fontSize: 12, color: _pal.textDim, height: 1.5),
               ),
               const SizedBox(height: 20),
 
               // ── Alarm radius ────────────────────────────────────────────
               Row(children: [
-                Text('Alarm radius', style: TextStyle(fontSize: 13, color: _day ? kDFg2 : kN2)),
+                Text('Alarm radius', style: TextStyle(fontSize: 13, color: _pal.textTertiary)),
                 const Spacer(),
                 Text('${radius.round()} m',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
-                        color: _day ? kDFg0 : kN1)),
+                        color: _pal.textPrimary)),
               ]),
               SliderTheme(
                 data: SliderTheme.of(ctx).copyWith(
-                  activeTrackColor:     _day ? kDPort : kN1,
-                  thumbColor:           _day ? kDPort : kN0,
-                  inactiveTrackColor:   _day ? kDDiv  : kNDiv,
+                  activeTrackColor:     _pal.port,
+                  thumbColor:           _pal.pick(kDPort, kN0),
+                  inactiveTrackColor:   _pal.divider,
                   // Tick marks default to grey in dark themes — pin them to the
                   // palette so night mode stays pure black/red.
-                  activeTickMarkColor:   _day ? kDPortL : kN0,
-                  inactiveTickMarkColor: _day ? kDBrd   : kNDiv,
-                  overlayColor: (_day ? kDPort : kN1).withValues(alpha: 0.18),
-                  valueIndicatorColor: _day ? kDPort : kNBg,
+                  activeTickMarkColor:   _pal.pick(kDPortL, kN0),
+                  inactiveTickMarkColor: _pal.border,
+                  overlayColor: (_pal.port).withValues(alpha: 0.18),
+                  valueIndicatorColor: _pal.pick(kDPort, kNBg),
                 ),
                 child: Slider(
                   value: radius.clamp(10.0, 1000.0),
@@ -622,30 +623,30 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                 ),
               ),
               Row(children: [
-                Text('10 m', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+                Text('10 m', style: TextStyle(fontSize: 10, color: _pal.textFaint)),
                 const Spacer(),
-                Text('1 000 m', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+                Text('1 000 m', style: TextStyle(fontSize: 10, color: _pal.textFaint)),
               ]),
               const SizedBox(height: 16),
 
               // ── Warning threshold ───────────────────────────────────────
               Row(children: [
-                Text('Warning at', style: TextStyle(fontSize: 13, color: _day ? kDFg2 : kN2)),
+                Text('Warning at', style: TextStyle(fontSize: 13, color: _pal.textTertiary)),
                 const Spacer(),
                 Text('${(warnFrac * 100).round()} % of radius'
                     ' (${(radius * warnFrac).round()} m)',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                        color: _day ? kDStale : kN1)),
+                        color: _pal.stale)),
               ]),
               SliderTheme(
                 data: SliderTheme.of(ctx).copyWith(
-                  activeTrackColor:     _day ? kDStale : kN2,
-                  thumbColor:           _day ? kDStale : kN1,
-                  inactiveTrackColor:   _day ? kDDiv   : kNDiv,
-                  activeTickMarkColor:   _day ? kDAmbs : kN1,
-                  inactiveTickMarkColor: _day ? kDBrd  : kNDiv,
-                  overlayColor: (_day ? kDStale : kN1).withValues(alpha: 0.18),
-                  valueIndicatorColor: _day ? kDStale : kNBg,
+                  activeTrackColor:     _pal.pick(kDStale, kN2),
+                  thumbColor:           _pal.stale,
+                  inactiveTrackColor:   _pal.divider,
+                  activeTickMarkColor:   _pal.pick(kDAmbs, kN1),
+                  inactiveTickMarkColor: _pal.border,
+                  overlayColor: (_pal.stale).withValues(alpha: 0.18),
+                  valueIndicatorColor: _pal.pick(kDStale, kNBg),
                 ),
                 child: Slider(
                   value: warnFrac.clamp(0.5, 0.95),
@@ -655,9 +656,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                 ),
               ),
               Row(children: [
-                Text('50 %', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+                Text('50 %', style: TextStyle(fontSize: 10, color: _pal.textFaint)),
                 const Spacer(),
-                Text('95 %', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+                Text('95 %', style: TextStyle(fontSize: 10, color: _pal.textFaint)),
               ]),
               const SizedBox(height: 16),
 
@@ -667,9 +668,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               // Tap again to stop; auto-stops after 60 s.
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: testing ? (_day ? kDStale : kN1) : (_day ? kDFg3 : kN3),
+                  foregroundColor: testing ? (_pal.stale) : (_pal.textDim),
                   side: BorderSide(
-                      color: testing ? (_day ? kDStale : kN1) : (_day ? kDBrd : kNDiv)),
+                      color: testing ? (_pal.stale) : (_pal.border)),
                 ),
                 icon: Icon(testing ? Icons.stop_circle_outlined : Icons.volume_up_outlined, size: 16),
                 label: Text(testing ? 'Stop test' : 'Test alarm (quiet)'),
@@ -692,8 +693,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                   Expanded(
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: _day ? kDStale : kN1,
-                        side: BorderSide(color: _day ? kDStale : kN2),
+                        foregroundColor: _pal.stale,
+                        side: BorderSide(color: _pal.pick(kDStale, kN2)),
                       ),
                       onPressed: () {
                         Navigator.pop(ctx);
@@ -707,8 +708,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _day ? kDPort : kNBg,
-                      foregroundColor: _day ? Colors.black : kN1,
+                      backgroundColor: _pal.pick(kDPort, kNBg),
+                      foregroundColor: _pal.pick(Colors.black, kN1),
                     ),
                     onPressed: () {
                       Navigator.pop(ctx);
@@ -862,17 +863,18 @@ class _WptEditSheetState extends State<_WptEditSheet> {
 
   // ── Night-safe colour helpers ─────────────────────────────────────────────
   bool get _day => widget.dayMode;
-  Color get _cText    => _day ? kDFg0   : kN1;
-  Color get _cLabel   => _day ? kDFg3 : kN2;
-  Color get _cHint    => _day ? kDFg4 : kN3;
-  Color get _cBorder  => _day ? kDBrd   : kNDiv;
-  Color get _cFocus   => _day ? kDFoc   : kN2;
-  Color get _cSymBg   => _day ? const Color(0xFF1A2A1A) : kNBg; // green-tinted form bg
-  Color get _cSymFg   => _day ? kDGps   : kN1;
-  Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A) : kNBg; // green-tinted save bg
-  Color get _cCancel  => _day ? kDFg3 : kN2;
-  Color get _cDlgBg   => _day ? kDDiv   : kNBg;
-  Color get _cDlgBody => _day ? kDFg2 : kN2;
+  Palette get _pal => Palette.of(_day);
+  Color get _cText    => _pal.textPrimary;
+  Color get _cLabel   => _pal.pick(kDFg3, kN2);
+  Color get _cHint    => _pal.pick(kDFg4, kN3);
+  Color get _cBorder  => _pal.border;
+  Color get _cFocus   => _pal.pick(kDFoc, kN2);
+  Color get _cSymBg   => _pal.pick(kDFormBg, kNBg); // green-tinted form bg
+  Color get _cSymFg   => _pal.gps;
+  Color get _cSaveBg  => _pal.pick(kDSaveBg, kNBg); // green-tinted save bg
+  Color get _cCancel  => _pal.pick(kDFg3, kN2);
+  Color get _cDlgBg   => _pal.pick(kDDiv, kNBg);
+  Color get _cDlgBody => _pal.textTertiary;
 
   void _confirmDelete() {
     Navigator.pop(context);
@@ -1018,15 +1020,15 @@ class _WptEditSheetState extends State<_WptEditSheet> {
       errorText: errorText,
       labelStyle: TextStyle(color: _cLabel),
       hintStyle: TextStyle(color: _cHint),
-      errorStyle: TextStyle(color: _day ? kDEmg : kN1),
+      errorStyle: TextStyle(color: _pal.pick(kDEmg, kN1)),
       enabledBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: _cBorder)),
       focusedBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: _cFocus)),
       errorBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: _day ? kDEmg : kN1)),
+          borderSide: BorderSide(color: _pal.pick(kDEmg, kN1))),
       focusedErrorBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: _day ? kDEmg : kN1)),
+          borderSide: BorderSide(color: _pal.pick(kDEmg, kN1))),
     );
   }
 }

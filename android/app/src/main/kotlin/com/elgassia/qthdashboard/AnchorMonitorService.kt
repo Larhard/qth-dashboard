@@ -156,7 +156,9 @@ class AnchorMonitorService : Service() {
             // the controller's liveness timer reset so a still boat never false-alarms.
             // We deliberately do NOT request NETWORK_PROVIDER — its coarse fixes would
             // only add noise.
-            locManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1_000L, 0f, locationListener)
+            locManager?.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER,
+                Tuning.Gps.UPDATE_INTERVAL_MS, Tuning.Gps.UPDATE_MIN_DISTANCE_M, locationListener)
         } catch (_: Exception) {}
     }
 
@@ -198,7 +200,9 @@ class AnchorMonitorService : Service() {
     // ── 1 Hz ticker (drives the GPS-loss timer) ──────────────────────────────────
 
     private val ticker = object : Runnable {
-        override fun run() { AnchorController.tick(); handler.postDelayed(this, 1_000L) }
+        override fun run() {
+            AnchorController.tick(); handler.postDelayed(this, Tuning.Gps.TICK_INTERVAL_MS)
+        }
     }
     private fun startTicker() { handler.removeCallbacks(ticker); handler.post(ticker) }
     private fun stopTicker()  { handler.removeCallbacks(ticker) }

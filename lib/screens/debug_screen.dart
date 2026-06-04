@@ -176,13 +176,14 @@ class _DebugScreenState extends State<DebugScreen> {
 
   // ── Palette (day / night) ─────────────────────────────────────────────────
   bool get _day => widget.dayMode;
-  Color get _cText  => _day ? kDFg0   : kN1;
-  Color get _cLabel => _day ? kDFg3   : kN2;
-  Color get _cHead  => _day ? kDFg3   : kN2;
-  Color get _cGood  => _day ? kDGps   : kN2;
-  Color get _cWarn  => _day ? kDCityP : kN2;
-  Color get _cBad   => _day ? kDEmg   : kN1;
-  Color get _cDim   => _day ? kDFg3   : kN3;
+  Palette get _pal => Palette.of(_day);
+  Color get _cText  => _pal.textPrimary;
+  Color get _cLabel => _pal.pick(kDFg3, kN2);
+  Color get _cHead  => _pal.pick(kDFg3, kN2);
+  Color get _cGood  => _pal.pick(kDGps, kN2);
+  Color get _cWarn  => _pal.pick(kDCityP, kN2);
+  Color get _cBad   => _pal.pick(kDEmg, kN1);
+  Color get _cDim   => _pal.textDim;
 
   // ── Shared helpers ────────────────────────────────────────────────────────
 
@@ -198,7 +199,7 @@ class _DebugScreenState extends State<DebugScreen> {
                 fontWeight: FontWeight.w700)),
       );
 
-  Widget _divider() => Divider(color: _day ? kDDiv : kNDiv, height: 1, thickness: 1);
+  Widget _divider() => Divider(color: _pal.divider, height: 1, thickness: 1);
 
   Widget _row(String label, String value,
       {Color? vc, bool mono = true, VoidCallback? onTap}) {
@@ -232,8 +233,8 @@ class _DebugScreenState extends State<DebugScreen> {
     HapticFeedback.lightImpact();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('Copied: $value',
-          style: TextStyle(color: _day ? kDFg1 : kN2, fontSize: 12)),
-      backgroundColor: _day ? kDSnackBg : kNBg,
+          style: TextStyle(color: _pal.textSecondary, fontSize: 12)),
+      backgroundColor: _pal.snackBg,
       duration: const Duration(milliseconds: 1200),
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -431,7 +432,7 @@ class _DebugScreenState extends State<DebugScreen> {
     if (pos == null) {
       return Center(
         child: Text('Waiting for GPS fix…',
-            style: TextStyle(color: _day ? kDFg3 : kN3, fontSize: 15)),
+            style: TextStyle(color: _pal.textDim, fontSize: 15)),
       );
     }
     final lat = pos.latitude;
@@ -468,13 +469,13 @@ class _DebugScreenState extends State<DebugScreen> {
         _section('Locators'),
         _divider(),
         _row('Maidenhead 8 (1 km)', mh8,
-            vc: _day ? kDGps   : kN2, onTap: () => _copySnack(mh8)),
+            vc: _pal.pick(kDGps, kN2), onTap: () => _copySnack(mh8)),
         _row('Maidenhead 6 (12 km)', mh6,
-            vc: _day ? kDGpsM6 : kN3, onTap: () => _copySnack(mh6)),
+            vc: _pal.pick(kDGpsM6, kN3), onTap: () => _copySnack(mh6)),
         _row('Maidenhead 4 (field)', mh4,
-            vc: _day ? kDGpsM4 : kN4, onTap: () => _copySnack(mh4)),
+            vc: _pal.pick(kDGpsM4, kN4), onTap: () => _copySnack(mh4)),
         _row('MGRS', mgrsStr,
-            vc: _day ? kDAmb   : kN2, onTap: () => _copySnack(mgrsStr)),
+            vc: _pal.amber, onTap: () => _copySnack(mgrsStr)),
 
         // ── URI / links ────────────────────────────────────────────────────
         _section('URIs  (tap to copy)'),
@@ -512,7 +513,7 @@ class _DebugScreenState extends State<DebugScreen> {
           ? '—'
           : '${nc.city.name}  →  ${nc.bearingDeg.round()}°  ${formatDistance(nc.distKm)}';
       rows.add(_row(labels[mode]!, value,
-          vc: _day ? dayColors[mode] : kN2));
+          vc: _pal.pick(dayColors[mode]!, kN2)));
     }
     return rows;
   }
@@ -757,7 +758,7 @@ class _TrackBufferCanvas extends StatelessWidget {
       height: 160,
       decoration: BoxDecoration(
         // Pure black in night mode (no grey tint), near-black in day.
-        color: dayMode ? const Color(0xFF0A0A0A) : Colors.black,
+        color: dayMode ? kDDebugPanel : Colors.black,
         border: Border.all(color: dayMode ? kDDiv : kNDiv),
         borderRadius: BorderRadius.circular(4),
       ),
@@ -808,7 +809,7 @@ class _BufferPainter extends CustomPainter {
     Offset s(Offset p) => Offset(cx + p.dx * scale, cy + p.dy * scale);
 
     final dotNew  = dayMode ? kDPortL                : kN1;
-    final dotOld  = dayMode ? const Color(0xFF2A3A2A) : kNEmgRingDim;
+    final dotOld  = dayMode ? kDDebugDotOld : kNEmgRingDim;
     final arrow   = dayMode ? kDGps                  : kN1;
     final nMark   = dayMode ? kDBrd                  : kN4;
 

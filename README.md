@@ -78,6 +78,35 @@ Long-press the city name to open a full detail sheet (coordinates, bearing, port
 
 Both MOB and a navigation waypoint can be active simultaneously.
 
+### Anchor alarm
+
+A drag/anchor-watch alarm for sailing, set up from the Waypoints screen (long-press
+guarded, so it can never be triggered from the main display while underway):
+
+- Drop the anchor at the current position with a configurable **radius (10 m –
+  1000 m)** and a **warning ring** (default 80 % of radius).
+- **Two levels:** a gentle warning (soft ping every 8 s + double vibration), then a
+  continuous, deliberately-harsh speaker siren + vibration + flashlight strobe +
+  full-screen blink. The alarm sounds **regardless of silent / mute / DND / lock**.
+- Also escalates on **genuine GPS loss** (60 s → warning, 180 s → alarm) and on
+  **low battery while not charging** — never on a stationary boat with working GPS.
+- The alarm **latches**: returning inside the radius does not silence it. Dismiss by
+  **holding the mute button for 3 s** (progress bar); a tap won't dismiss it.
+- A **test button** plays the siren at 10 % volume from the speaker.
+- **Survives** app restart and reboot via a foreground service; the live status
+  stays in sync on the main view. Runs at full robustness regardless of charger.
+
+### Floating compass overlay
+
+An always-on-top mini compass shown over other apps (maps, messaging):
+
+- Compass + numeric heading + one coloured line per active POI (city / waypoint /
+  MOB / anchor), each with bearing + distance, in the same palette as the dashboard.
+- Native rendering (no second Flutter engine) to stay light on memory and battery.
+- Draggable; tap to jump back to the dashboard. Enable from the Waypoints screen
+  (requires the *"Display over other apps"* permission). Shown only in the
+  background — never on top of the full dashboard.
+
 ### GPX import / export
 
 - **Export** (upload icon) — generates a valid GPX 1.1 file and shares via Android share sheet (email, cloud storage, OsmAnd, Garmin, etc.)
@@ -97,7 +126,10 @@ Both MOB and a navigation waypoint can be active simultaneously.
 - **Hold the moon / sun icon** to switch — deliberate hold prevents accidental activation
 - All UI elements — tooltips, dialogs, snackbars, ripples, tab highlights — follow the palette; no greys in night mode
 
-The entire UI uses a unified colour system (`kD*` day constants, `kN*` night constants in `utils/units.dart`).
+The entire UI uses a unified colour system: `kD*` day + `kN*` night constants in
+`theme/palette.dart`, resolved through a `Palette` semantic resolver so each
+role's day/night choice is defined once. The pure-red night rule is enforced by a
+test (`test/palette_test.dart`).
 
 ### GPS on lock screen
 - GPS pauses when the screen turns off by default (saves battery on long hikes)
@@ -128,29 +160,44 @@ Hold the bug icon (top-left). Four tabs:
 qth_helper/
 ├── lib/
 │   ├── main.dart                    # App entry; mode-aware Material theme
+│   ├── config/tuning.dart           # Dart tunables (GPS cadence, display thresholds)
+│   ├── theme/palette.dart           # kD*/kN* colours + Palette semantic resolver
+│   ├── settings/display_settings.dart # Persisted display preferences
 │   ├── models/
 │   │   ├── city.dart
 │   │   └── waypoint.dart
 │   ├── screens/
-│   │   ├── home_screen.dart         # Main navigation display (~2 600 lines)
-│   │   ├── waypoints_screen.dart    # Waypoint list, GPX import/export
+│   │   ├── home_screen.dart         # Main navigation display
+│   │   ├── waypoints_screen.dart    # Waypoint list, GPX import/export, anchor setup
 │   │   ├── about_screen.dart        # Legal notices and open-source licences
 │   │   └── debug_screen.dart        # 4-tab sensor / GPS / heading debug view
 │   ├── services/
+│   │   ├── anchor_service.dart      # Anchor-alarm presenter (polls native snapshot)
 │   │   ├── city_service.dart        # Spatial grid lookup (cities and ports)
 │   │   ├── declination_service.dart
 │   │   ├── environment_service.dart # Sensor stream (proximity, env, motion)
+│   │   ├── overlay_service.dart     # Floating-compass overlay controller
 │   │   └── waypoint_service.dart    # MOB + nav waypoints, GPX import, undo
 │   └── utils/
+│       ├── anchor_math.dart         # Pure anchor-alarm level spec (unit-tested)
 │       ├── coordinate_utils.dart    # DDM / DD / DMS + Maidenhead
+│       ├── formatting.dart          # Speed / distance / altitude / elapsed (unit-tested)
 │       ├── geo_utils.dart           # Haversine + bearing
 │       ├── gpx_utils.dart           # GPX 1.1 parse + build (xml package)
 │       ├── mgrs_utils.dart
 │       ├── track_bearing.dart       # Smoothed track bearing estimator
-│       └── units.dart               # Unified kD*/kN* colour palette + prefs
+│       └── units.dart               # Barrel: re-exports palette + formatting + settings
 ├── android/app/src/main/
-│   ├── kotlin/…/MainActivity.kt     # Lock-screen flags, pocket lock, file picker, sensors
-│   └── AndroidManifest.xml          # GPS permissions + GPX intent filters
+│   ├── kotlin/…/MainActivity.kt          # Lock-screen flags, pocket lock, file picker, sensors
+│   ├── kotlin/…/Tuning.kt                # Native tunables (anchor thresholds, GPS, audio)
+│   ├── kotlin/…/AnchorController.kt      # Anchor-alarm authority (latching state machine)
+│   ├── kotlin/…/AnchorAlarmManager.kt    # Hardware driver (speaker siren, vibrate, torch)
+│   ├── kotlin/…/AnchorMonitorService.kt  # Foreground service: GPS feed + survival
+│   ├── kotlin/…/OverlayService.kt        # Floating-overlay host service
+│   ├── kotlin/…/OverlayView.kt           # Native compass view for the overlay
+│   └── AndroidManifest.xml               # GPS permissions + GPX intent filters
+├── test/                            # Unit tests (anchor, geo, gpx, import, palette,
+│                                    #   formatting, native↔Dart tuning sync)
 ├── assets/
 │   ├── cities.tsv                   # Top-5 000 cities — committed (CC BY 4.0)
 │   ├── cities_precise.tsv           # gitignored — create with fetch_cities.py
@@ -329,11 +376,15 @@ dart run flutter_launcher_icons
 | `ACCESS_FINE_LOCATION` | Always | GPS coordinates and speed |
 | `ACCESS_COARSE_LOCATION` | Always | Fallback location |
 | `WAKE_LOCK` | Always | Keep screen on |
-| `FOREGROUND_SERVICE` | GPS on lock screen | Android API 28+ |
-| `FOREGROUND_SERVICE_LOCATION` | GPS on lock screen | Android API 34+ |
+| `FOREGROUND_SERVICE` | GPS on lock screen / anchor alarm | Android API 28+ |
+| `FOREGROUND_SERVICE_LOCATION` | GPS on lock screen / anchor alarm | Android API 34+ |
 | `ACCESS_BACKGROUND_LOCATION` | GPS on lock screen | Android 10+; granted via system prompt at runtime |
+| `FOREGROUND_SERVICE_SPECIAL_USE` | Floating compass overlay | Android API 34+ |
+| `SYSTEM_ALERT_WINDOW` | Floating compass overlay | Granted via system settings on first enable |
+| `VIBRATE` / camera flash | Anchor alarm | Vibration + flashlight strobe during alarm |
 
-All features except *GPS on lock screen* work with only the first three permissions.
+The core navigation features work with only the first three permissions. The
+anchor alarm and floating overlay request the additional ones when enabled.
 The app never uses a network connection.
 
 ---
@@ -349,6 +400,7 @@ The app never uses a network connection.
 | `share_plus` | Share GPX export via Android share sheet |
 | `path_provider` | Temporary directory for GPX file staging |
 | `xml` | GPX 1.1 XML parsing and generation |
+| `package_info_plus` | App version for the About screen (single source: `pubspec.yaml`) |
 
 ---
 
