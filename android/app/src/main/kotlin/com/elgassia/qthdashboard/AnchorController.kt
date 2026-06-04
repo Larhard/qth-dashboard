@@ -70,9 +70,19 @@ object AnchorController {
 
     fun start(ctx: Context, lat: Double, lon: Double, radiusM: Double, warnFrac: Double) {
         alarm = AnchorAlarmManager.getInstance(ctx)
+        val coercedRadius = radiusM.coerceIn(10.0, 1000.0)
+        // start() is delivered TWICE for one drop — once in-process by MainActivity
+        // (so the alarm arms instantly) and once by the service (for survival).  If
+        // we're already monitoring this very anchor, keep the LIVE state: re-running
+        // the reset would wipe a latched alarm or the muted flag.
+        val sameAnchor = active &&
+            Math.abs(this.lat - lat) < 1e-7 &&
+            Math.abs(this.lon - lon) < 1e-7 &&
+            Math.abs(this.radiusM - coercedRadius) < 0.5
         this.lat = lat; this.lon = lon
-        this.radiusM = radiusM.coerceIn(10.0, 1000.0)
+        this.radiusM = coercedRadius
         this.warnFrac = warnFrac.coerceIn(0.50, 0.95)
+        if (sameAnchor) { active = true; onStateChanged?.invoke(); return }
         active = true
         distanceM = 0.0; bearingDeg = 0.0
         gpsLostSeconds = 0; hasFix = false

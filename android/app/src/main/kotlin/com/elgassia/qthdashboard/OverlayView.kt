@@ -42,7 +42,10 @@ class OverlayView(context: Context) : View(context) {
     @Volatile var bgColor = 0xCC000000.toInt()
     @Volatile var textColor = Color.WHITE
     // Info lines (city / waypoint / MOB / anchor), each with its palette colour.
-    @Volatile var lineTexts = arrayOf<String>()
+    // Each line is a croppable [lineLabels] (name) plus an always-visible
+    // [lineValues] (heading + distance) drawn flush-right so it is never pushed off.
+    @Volatile var lineLabels = arrayOf<String>()
+    @Volatile var lineValues = arrayOf<String>()
     @Volatile var lineColors = IntArray(0)
     // POI markers (parallel arrays): bearing°, ARGB colour, size scale.
     @Volatile var markerBearings = DoubleArray(0)
@@ -65,7 +68,7 @@ class OverlayView(context: Context) : View(context) {
     private val compassMin get() = dp(70f)
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val contentH = headingH + lineTexts.size * lineH
+        val contentH = headingH + lineLabels.size * lineH
         val h = (padV * 2 + maxOf(compassMin, contentH)).toInt()
         setMeasuredDimension(dp(210f).toInt(), h)
     }
@@ -143,9 +146,9 @@ class OverlayView(context: Context) : View(context) {
 
         // ── Numeric heading + per-POI info lines ────────────────────────────────
         val tx = dp(82f)
-        val maxW = w - tx - dp(8f)
+        val rightX = w - dp(8f)                  // flush-right edge for values
         // Vertically centre the whole text block (heading + lines).
-        val blockH = headingH + lineTexts.size * lineH
+        val blockH = headingH + lineLabels.size * lineH
         var y = (h - blockH) / 2f + dp(20f)   // baseline of the heading number
 
         text.color = textColor; text.isFakeBoldText = true; text.textSize = dp(22f)
@@ -153,10 +156,18 @@ class OverlayView(context: Context) : View(context) {
         canvas.drawText(if (headingValid) "${Math.round(heading)}°" else "---", tx, y, text)
 
         text.isFakeBoldText = false; text.textSize = dp(11f)
-        for (i in lineTexts.indices) {
+        for (i in lineLabels.indices) {
             y += lineH
             text.color = if (i < lineColors.size) lineColors[i] else textColor
-            canvas.drawText(ellipsize(lineTexts[i], maxW), tx, y, text)
+            val value = if (i < lineValues.size) lineValues[i] else ""
+            // Draw the value flush-right FIRST (always visible), then crop the label
+            // to whatever width remains so heading/distance is never pushed off-view.
+            text.textAlign = Paint.Align.RIGHT
+            canvas.drawText(value, rightX, y, text)
+            val valueW = text.measureText(value)
+            text.textAlign = Paint.Align.LEFT
+            val labelMaxW = rightX - tx - valueW - dp(6f)
+            canvas.drawText(ellipsize(lineLabels[i], labelMaxW), tx, y, text)
         }
     }
 
@@ -229,6 +240,7 @@ class OverlayView(context: Context) : View(context) {
     }
 
     private fun ellipsize(s: String, maxW: Float): String {
+        if (maxW <= 0f) return ""
         if (text.measureText(s) <= maxW) return s
         var out = s
         while (out.isNotEmpty() && text.measureText("$out…") > maxW) out = out.dropLast(1)

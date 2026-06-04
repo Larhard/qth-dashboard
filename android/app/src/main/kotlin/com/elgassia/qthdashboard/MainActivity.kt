@@ -318,13 +318,22 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         val lon  = call.argument<Double>("lon")  ?: 0.0
                         val r    = call.argument<Double>("radius")   ?: 50.0
                         val wf   = call.argument<Double>("warnFrac") ?: 0.80
+                        // Arm the controller IN-PROCESS right now, so the alarm logic
+                        // (and the splash it drives) works immediately and does NOT
+                        // depend on the foreground service winning its start race —
+                        // a delayed/blocked FGS start on Android 12+ would otherwise
+                        // leave the controller inactive and the alarm dead.  The
+                        // service then attaches GPS/battery/wake-lock for survival.
+                        AnchorController.start(this, lat, lon, r, wf)
                         val svc  = Intent(this, AnchorMonitorService::class.java).apply {
                             action = AnchorMonitorService.ACTION_START
                             putExtra("lat", lat); putExtra("lon", lon)
                             putExtra("radius", r); putExtra("warnFrac", wf)
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                            startForegroundService(svc) else startService(svc)
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                startForegroundService(svc) else startService(svc)
+                        } catch (_: Exception) { /* controller is already armed above */ }
                         result.success(null)
                     }
                     "stopAnchorService" -> {
@@ -388,7 +397,9 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             .map { it.toLong().toInt() }.toIntArray()
                         val ms = (call.argument<List<Number>>("markerScales") ?: emptyList())
                             .map { it.toDouble() }.toDoubleArray()
-                        val lt = (call.argument<List<String>>("lineTexts") ?: emptyList())
+                        val ll = (call.argument<List<String>>("lineLabels") ?: emptyList())
+                            .toTypedArray()
+                        val lv = (call.argument<List<String>>("lineValues") ?: emptyList())
                             .toTypedArray()
                         val lc = (call.argument<List<Number>>("lineColors") ?: emptyList())
                             .map { it.toLong().toInt() }.toIntArray()
@@ -403,7 +414,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             ringColor        = (call.argument<Number>("ringColor")      ?: 0).toLong(),
                             bgColor          = (call.argument<Number>("bgColor")   ?: 0).toLong(),
                             textColor        = (call.argument<Number>("textColor") ?: 0).toLong(),
-                            lineTexts        = lt,
+                            lineLabels       = ll,
+                            lineValues       = lv,
                             lineColors       = lc,
                             markerBearings   = mb,
                             markerColors     = mc,

@@ -154,8 +154,9 @@ class OverlayService : Service(), SensorEventListener {
             val detail = if (AnchorController.gpsLostSeconds > 0)
                 "GPS lost ${AnchorController.gpsLostSeconds}s"
             else
-                "${AnchorController.distanceM.roundToInt()} / ${AnchorController.radiusM.roundToInt()} m"
-            v.lineTexts = arrayOf("$status  $detail")
+                "${AnchorController.distanceM.roundToInt()}/${AnchorController.radiusM.roundToInt()} m"
+            v.lineLabels = arrayOf(status)
+            v.lineValues = arrayOf(detail)
             v.lineColors = intArrayOf(v.northColor)
             // One dot toward the anchor.
             v.markerBearings = doubleArrayOf(AnchorController.bearingDeg)
@@ -220,7 +221,7 @@ class OverlayService : Service(), SensorEventListener {
         heading: Double, headingValid: Boolean, windRose: Boolean,
         secondaryBearing: Double?, primaryColor: Long, secondaryColor: Long,
         northColor: Long, ringColor: Long, bgColor: Long, textColor: Long,
-        lineTexts: Array<String>, lineColors: IntArray,
+        lineLabels: Array<String>, lineValues: Array<String>, lineColors: IntArray,
         markerBearings: DoubleArray, markerColors: IntArray, markerScales: DoubleArray,
     ) {
         lastFlutterUpdate = SystemClock.elapsedRealtime() // Flutter is alive → it drives
@@ -235,7 +236,8 @@ class OverlayService : Service(), SensorEventListener {
         v.ringColor = ringColor.toInt()
         v.bgColor = bgColor.toInt()
         v.textColor = textColor.toInt()
-        v.lineTexts = lineTexts
+        v.lineLabels = lineLabels
+        v.lineValues = lineValues
         v.lineColors = lineColors
         v.markerBearings = markerBearings
         v.markerColors = markerColors

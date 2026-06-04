@@ -934,27 +934,34 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     // One coloured text line per active item, each in its dashboard palette colour.
-    final lineTexts = <String>[];
+    // The label (name) is croppable; the value (heading + distance) is drawn
+    // flush-right by the native view so it is never pushed off when names are long.
+    final lineLabels = <String>[];
+    final lineValues = <String>[];
     final lineColors = <int>[];
-    void addLine(String text, Color c) { lineTexts.add(text); lineColors.add(c.toARGB32()); }
+    void addLine(String label, String value, Color c) {
+      lineLabels.add(label);
+      lineValues.add(value);
+      lineColors.add(c.toARGB32());
+    }
     String bd(double b, double distKm) =>
         '${b.round()}°  ${formatDistanceUnit(distKm, _speedUnit)}';
 
-    final nc = _nearestCity;
-    if (nc != null) addLine(nc.city.name, _cityColor);
-
     if (pos != null) {
+      final nc = _nearestCity;
+      if (nc != null) addLine(nc.city.name, bd(nc.bearingDeg, nc.distKm), _cityColor);
+
       final nav = WaypointService.instance.active;
       if (nav != null) {
         final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
         final dk = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
-        addLine('› ${nav.name}  ${bd(b, dk)}', _dayMode ? kDNav : kN1);
+        addLine(nav.name, bd(b, dk), _dayMode ? kDNav : kN1);
       }
       final mob = WaypointService.instance.emergency;
       if (mob != null) {
         final b = bearing(pos.latitude, pos.longitude, mob.lat, mob.lon);
         final dk = haversineKm(pos.latitude, pos.longitude, mob.lat, mob.lon);
-        addLine('MOB  ${bd(b, dk)}', _dayMode ? kDEmg : kN0);
+        addLine('MOB', bd(b, dk), _dayMode ? kDEmg : kN0);
       }
     }
 
@@ -968,7 +975,7 @@ class _HomeScreenState extends State<HomeScreen>
       final detail = a.gpsLost
           ? 'GPS lost ${a.gpsLossSeconds}s'
           : '${(a.distanceM ?? 0).round()}/${a.radiusM.round()} m';
-      addLine('$status  $detail', _anchorLevelColor(a.level));
+      addLine(status, detail, _anchorLevelColor(a.level));
     }
 
     OverlayController.instance.update(
@@ -982,7 +989,8 @@ class _HomeScreenState extends State<HomeScreen>
       ringColor: _dayMode ? kDFg0 : kN2,
       bgColor: (_dayMode ? Colors.black : kNBg).withValues(alpha: 0.92),
       textColor: _dayMode ? kDFg0 : kN1,
-      lineTexts: lineTexts,
+      lineLabels: lineLabels,
+      lineValues: lineValues,
       lineColors: lineColors,
       markerBearings: mB,
       markerColors: mC,
