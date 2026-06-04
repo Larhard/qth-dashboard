@@ -130,10 +130,12 @@ object AnchorController {
         evaluate()
     }
 
-    /** GNSS satellite status — distinguishes "stationary" (sats>0) from "lost". */
+    /** GNSS satellite status — distinguishes "stationary" (sats>0) from "lost".
+     *  Just records the count; the 1 Hz [tick] is the single place that derives the
+     *  loss duration, so there's no need to re-run the state machine here (the
+     *  callback can fire several times a second). */
     fun onGnss(satellitesUsedInFix: Int) {
         satsUsedInFix = satellitesUsedInFix
-        evaluate()
     }
 
     /** Battery state from the service's ACTION_BATTERY_CHANGED receiver. */
@@ -147,10 +149,17 @@ object AnchorController {
     fun tick() {
         if (!active) return
         val noFix = ((SystemClock.elapsedRealtime() - lastFixElapsed) / 1000L).toInt()
-        // "Really lost" = no fix for a while AND no satellites used in the fix.
-        // If satellites are still used (>0) the receiver is fine — we're just
-        // stationary — so the loss timer stays at zero (no false alarm).
-        val reallyLost = noFix > GPS_NOFIX_GRACE_S && satsUsedInFix <= 0
+        // "Really lost" needs BOTH: no precise fix for a while AND a CONFIRMED zero
+        // satellites used in the fix (satsUsedInFix == 0, reported by the GNSS
+        // callback).  This is what guarantees a STATIONARY boat with strong signal
+        // never warns:
+        //   • A stationary receiver with a fix keeps delivering 1 Hz updates (we
+        //     requested GPS at 1 Hz / 0 m), so noFix stays ~0 — the timer never grows.
+        //   • Even if updates paused, as long as satellites are still used (> 0) we
+        //     KNOW the receiver is fine, so the timer is held at zero.
+        // satsUsedInFix == -1 means "not yet reported" (cold start) and is treated as
+        // NOT lost, so acquisition can't false-trigger a loss.
+        val reallyLost = noFix > GPS_NOFIX_GRACE_S && satsUsedInFix == 0
         gpsLostSeconds = if (reallyLost) noFix else 0
         evaluate()
     }

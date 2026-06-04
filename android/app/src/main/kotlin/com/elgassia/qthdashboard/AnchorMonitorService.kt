@@ -105,6 +105,7 @@ class AnchorMonitorService : Service() {
     private fun startMonitoring(lat: Double, lon: Double, r: Double, wf: Double, persist: Boolean) {
         if (persist) saveState(lat, lon, r, wf)
         AnchorController.start(this, lat, lon, r, wf)
+        lastNotifKey = null
         startForeground(NOTIF_ID, buildNotification())
         acquireWakeLock()
         startGps()
@@ -264,7 +265,17 @@ class AnchorMonitorService : Service() {
             .setContentIntent(tap).setOngoing(true).setOnlyAlertOnce(true).build()
     }
 
+    // Last content actually shown — used to skip redundant notify() calls.
+    private var lastNotifKey: String? = null
+
     private fun updateNotification() {
+        // onStateChanged fires on every position / battery update and every 1 Hz
+        // tick, but the notification text only changes when the state or the
+        // rounded distance/loss does.  Skip the rebuild + notify otherwise.
+        val key = "${AnchorController.state}|${AnchorController.distanceM.roundToInt()}|" +
+                  "${AnchorController.gpsLostSeconds}"
+        if (key == lastNotifKey) return
+        lastNotifKey = key
         try { getSystemService(NotificationManager::class.java)?.notify(NOTIF_ID, buildNotification()) }
         catch (_: Exception) {}
     }

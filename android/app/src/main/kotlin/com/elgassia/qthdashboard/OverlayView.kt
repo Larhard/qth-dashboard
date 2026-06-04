@@ -52,8 +52,15 @@ class OverlayView(context: Context) : View(context) {
     @Volatile var markerColors = IntArray(0)
     @Volatile var markerScales = DoubleArray(0)
 
+    // Height depends ONLY on the number of info lines, so only re-layout when that
+    // count changes; every other frame is a cheap repaint.
+    private var measuredLineCount = -1
+
     fun applyData() {
-        requestLayout()   // height depends on the number of info lines
+        if (lineLabels.size != measuredLineCount) {
+            measuredLineCount = lineLabels.size
+            requestLayout()
+        }
         postInvalidate()
     }
 
