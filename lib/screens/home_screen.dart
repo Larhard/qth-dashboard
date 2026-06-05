@@ -23,6 +23,7 @@ import '../services/anchor_service.dart';
 import '../services/overlay_service.dart';
 import '../widgets/arrow_widget.dart';
 import '../widgets/compass_painters.dart';
+import '../widgets/anchor_card.dart';
 import '../widgets/rel_bearing_arrow.dart';
 import '../widgets/city_detail_sheet.dart';
 import '../widgets/anchor_alarm_overlay.dart';
@@ -1008,92 +1009,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Anchor card colours ───────────────────────────────────────────────────
-  Color _anchorLevelColor(AnchorAlarmLevel lvl) => switch (lvl) {
-    AnchorAlarmLevel.alarm   => _pal.emergency,
-    AnchorAlarmLevel.warning => _pal.stale,
-    AnchorAlarmLevel.idle    => _pal.pick(kDPort, kN2),
-  };
-
-  Widget _anchorCard(bool portrait) {
-    final svc   = AnchorService.instance;
-    final dist  = svc.distanceM ?? 0.0;
-    final brg   = svc.bearingDeg ?? 0.0;
-    final r     = svc.radiusM;
-    final lvl   = svc.level;
-    final color = _anchorLevelColor(lvl);
-    final frac  = (dist / r).clamp(0.0, 1.2);
-
-    final arrowSz  = portrait ? 50.0 : 38.0;
-    final distFont = portrait ? 20.0 : 16.0;
-    final labelFont= portrait ? 11.0 : 10.0;
-
-    // Status label
-    final String status;
-    if (svc.gpsLost) {
-      status = 'GPS lost ${svc.gpsLossSeconds}s';
-    } else {
-      status = switch (lvl) {
-        AnchorAlarmLevel.alarm   => 'OUTSIDE RADIUS',
-        AnchorAlarmLevel.warning => 'WARNING',
-        AnchorAlarmLevel.idle    => 'RIDING',
-      };
-    }
-
-    return Padding(
-      padding: EdgeInsets.all(portrait ? 3 : 2),
-      child: Container(
-        padding: EdgeInsets.fromLTRB(
-            portrait ? 12 : 8, portrait ? 8 : 5,
-            portrait ? 12 : 8, portrait ? 8 : 5),
-        decoration: BoxDecoration(
-          border: Border.all(color: color.withValues(alpha: 0.55), width: 1.5),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(children: [
-          // Arrow with relative ring + progress ring overlay
-          SizedBox(
-            width: arrowSz, height: arrowSz,
-            child: Stack(alignment: Alignment.center, children: [
-              Positioned.fill(child: CustomPaint(
-                painter: AnchorProgressPainter(frac, color, lvl),
-              )),
-              _arrowWithRelRing(brg, color, arrowSz * 0.7),
-            ]),
-          ),
-          SizedBox(width: portrait ? 12 : 8),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Icon(Icons.anchor, size: labelFont + 2, color: color),
-                const SizedBox(width: 4),
-                Text(status, style: TextStyle(
-                    fontSize: labelFont, color: color,
-                    fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-              ]),
-              Row(children: [
-                Text('${dist.round()} m',
-                    style: TextStyle(fontSize: distFont, fontWeight: FontWeight.w700,
-                        color: color, fontFeatures: const [FontFeature.tabularFigures()])),
-                const SizedBox(width: 8),
-                Text('${brg.round()}°',
-                    style: TextStyle(fontSize: distFont * 0.8, color: color.withValues(alpha: 0.7),
-                        fontFeatures: const [FontFeature.tabularFigures()])),
-              ]),
-              Text('radius ${r.round()} m · warn ${svc.warningRadiusM.round()} m',
-                  style: TextStyle(fontSize: labelFont, color: color.withValues(alpha: 0.65))),
-            ],
-          )),
-          // Muted indicator (alarm is acknowledged but anchor still deployed).
-          if (svc.isMuted)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Icon(Icons.volume_off, color: color.withValues(alpha: 0.6), size: 18),
-            ),
-        ]),
-      ),
-    );
-  }
+  // Status colour lives on AnchorCard (also used by the floating-overlay line).
+  Color _anchorLevelColor(AnchorAlarmLevel lvl) => AnchorCard.levelColor(_pal, lvl);
 
   static String _gpxImportSummary(
       ({int added, int skipped, int renamed}) r, int total) {
@@ -1336,7 +1253,7 @@ class _HomeScreenState extends State<HomeScreen>
             if (anchoring) ...[
               _navWptCompact(pos),
               const SizedBox(height: 4),
-              _anchorCard(true),
+              AnchorCard(dayMode: _dayMode, portrait: true, heading: _heading),
             ] else if (nav != null) ...[
               const SizedBox(height: 8),
               _navWptCard(pos, nav, portrait: true),
@@ -1473,7 +1390,7 @@ class _HomeScreenState extends State<HomeScreen>
                     if (AnchorService.instance.isActive) ...[
                       _navWptCompact(pos),
                       const SizedBox(height: 4),
-                      _anchorCard(false),
+                      AnchorCard(dayMode: _dayMode, portrait: false, heading: _heading),
                       const SizedBox(height: 4),
                     ],
                   ]),

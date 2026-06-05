@@ -772,10 +772,21 @@ time, never a big-bang):
    to the old inline subscriptions (deliberately the safe form: it moves the
    *plumbing*, not the order-sensitive handler bodies). Verify with the lifecycle
    manual checks (screen-off release, resume, GPS-on-lock, anchor across lifecycle).
-4. **Next:** split the layout into per-section `StatefulWidget`s (heading, city, nav,
-   anchor, MOB), keeping the §3 no-scroll layout contract intact. Most sections read
-   many fields, so they're best done as presentational widgets fed current values
-   (prop-drilling is fine) — verifiable by a quick visual check per section.
+4. **Split the layout into per-section widgets — STARTED, then paused deliberately.**
+   The cleanly-bounded `AnchorCard` (reads the global `AnchorService`; needs only
+   `dayMode` + `heading` + `portrait`) moved to `widgets/anchor_card.dart`, with its
+   status colour exposed as `AnchorCard.levelColor` (also used by the overlay line).
+
+   **Where this stops being worth it:** the remaining sections (heading, coords,
+   city, nav, MOB) are tightly coupled to the State — gesture handlers
+   (hold-to-clear), `ValueListenableBuilder`s, and many toggle/copy callbacks.
+   Extracting them as presentational widgets means prop-drilling 10+ values + 3–4
+   callbacks each, which is churn with mostly *organizational* (not architectural)
+   benefit and real risk to the §3 layout/gesture wiring. The right prerequisite is
+   a small **display view-model/controller** (the toggles + display caches +
+   formatted values) that sections receive — do that first, THEN extract sections
+   cheaply. Until then, leaving the cohesive layout in `home_screen.dart` is the
+   better trade. The file is now ~2230 lines (from ~3360).
 
 Do not add unrelated concerns to `home_screen.dart` in the meantime; new sections
 belong in their own widget/file, and new pure logic in a tested `utils/` module.
