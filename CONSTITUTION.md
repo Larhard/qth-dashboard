@@ -475,6 +475,8 @@ lib/
 ├── main.dart                    # App root; stateful theme (day/night aware)
 ├── config/
 │   └── tuning.dart              # Dart tunables: GPS cadence, display thresholds (§5.9)
+├── controllers/
+│   └── sensor_lifecycle.dart    # Owns GPS/compass/tick subscriptions + lifecycle (no BuildContext)
 ├── theme/
 │   └── palette.dart             # ALL colour constants (kD*/kN*) + Palette resolver (§4)
 ├── settings/
@@ -528,10 +530,14 @@ concern into `theme/palette.dart`, `utils/formatting.dart`, and
 | `models/` | Dart core only | Services, screens, widgets |
 | `utils/` | Dart core, `xml`, `config/`/`theme/`/`settings/` | Services, models, screens |
 | `services/` | `models/`, `utils/`, `flutter/services` | Screens, widgets |
+| `controllers/` | `config/`/`utils/`, platform plugins | Screens, widgets, `BuildContext` |
 | `screens/` | All of the above | Nothing outside `lib/` |
 
-Services are plain Dart singletons with no Flutter widget dependencies. Screens
-are the only layer that touches `BuildContext`, `setState`, and `Navigator`.
+Services are plain Dart singletons with no Flutter widget dependencies. A
+`controller` is instance-scoped (owned by one widget) and may hold platform
+subscriptions/timers, but — like a service — has **no `BuildContext`** and does no
+layout; the owning screen passes it callbacks. Screens are the only layer that
+touches `BuildContext`, `setState`, and `Navigator`.
 
 ---
 
@@ -758,11 +764,18 @@ time, never a big-bang):
    functions whose correctness is verifiable by a quick feature check. The lifecycle
    pieces below are deferred precisely because their regressions surface only over a
    long run / real driving, which is expensive to verify.
-3. **Next:** extract the GPS/compass/anchor lifecycle into a small controller object
-   the widget observes, separating sensor state from layout. (Higher risk — touches
-   live state + the screen-on/off battery handling; do it behind on-device checks.)
-4. **Then:** split the layout into per-section `StatefulWidget`s (heading, city, nav,
-   anchor, MOB), keeping the §3 no-scroll layout contract intact.
+3. **Extract the sensor lifecycle into a controller — DONE.** `SensorLifecycle`
+   (`controllers/sensor_lifecycle.dart`) owns the GPS position stream, compass
+   subscription, and 1 Hz tick timer plus their start/stop/pause/resume lifecycle.
+   It holds NO sensor state and does NO orchestration — the widget passes its event
+   handlers + a `buildSettings` callback, so the data flow and ordering are identical
+   to the old inline subscriptions (deliberately the safe form: it moves the
+   *plumbing*, not the order-sensitive handler bodies). Verify with the lifecycle
+   manual checks (screen-off release, resume, GPS-on-lock, anchor across lifecycle).
+4. **Next:** split the layout into per-section `StatefulWidget`s (heading, city, nav,
+   anchor, MOB), keeping the §3 no-scroll layout contract intact. Most sections read
+   many fields, so they're best done as presentational widgets fed current values
+   (prop-drilling is fine) — verifiable by a quick visual check per section.
 
 Do not add unrelated concerns to `home_screen.dart` in the meantime; new sections
 belong in their own widget/file, and new pure logic in a tested `utils/` module.

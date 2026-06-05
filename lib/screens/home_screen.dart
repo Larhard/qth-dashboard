@@ -7,6 +7,7 @@ import 'package:get_storage/get_storage.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import '../config/tuning.dart';
+import '../controllers/sensor_lifecycle.dart';
 import '../utils/heading_source.dart';
 import '../utils/text_fit.dart';
 import '../models/waypoint.dart';
@@ -46,9 +47,10 @@ class _HomeScreenState extends State<HomeScreen>
   static const _compassIntervalMs = DisplayTuning.compassMinIntervalMs;
   static const _cityRecalcThresholdM = DisplayTuning.cityRecalcThresholdM;
 
-  // ── GPS / compass streams ─────────────────────────────────────────────────
-  StreamSubscription<Position>? _posSub;
-  StreamSubscription<CompassEvent>? _compassSub;
+  // ── GPS / compass / tick lifecycle ────────────────────────────────────────
+  // Subscription + timer plumbing lives in the controller; this widget keeps the
+  // event handlers and orchestration. Built in initState.
+  late final SensorLifecycle _sensors;
 
   // ── GPS state ─────────────────────────────────────────────────────────────
   Position? _position;
@@ -77,7 +79,6 @@ class _HomeScreenState extends State<HomeScreen>
   final _track = TrackBearingEstimator();
 
   // ── GPS staleness ─────────────────────────────────────────────────────────
-  Timer? _staleTimer;
   DateTime _lastGpsFix = DateTime.now();
   int _gpsStaleSeconds = 0; // 0 = fresh; > 0 = seconds since last fix
 
@@ -154,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen>
       'lat': svc.anchorLat, 'lon': svc.anchorLon,
       'radius': svc.radiusM, 'warnFrac': svc.warningFraction,
     }).catchError((_) {});
-    if (_gpsOnLock) _startPositionStreamBackground(); else _startPositionStream();
+    if (_gpsOnLock) _sensors.startBackgroundGps(); else _sensors.startForegroundGps();
     // Sync the live snapshot so an in-progress alarm shows its overlay at once.
     await svc.refresh();
     if (!mounted) return;
@@ -317,11 +318,17 @@ class _HomeScreenState extends State<HomeScreen>
         }
       });
     AnchorService.instance.onStateChanged = _onAnchorStateChanged;
+    _sensors = SensorLifecycle(
+      onPosition: _onPositionUpdate,
+      onCompass: _onCompassEvent,
+      onTick: _onStaleTick,
+      buildSettings: _locationSettings,
+    );
     // Restore anchor if it was active before the app was killed.
     if (AnchorService.instance.loadFromStorage()) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _restoreAnchor());
     }
-    _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
+    _sensors.ensureTimer();
     _init();
     // Check for a GPX file that was opened to launch the app (cold start).
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkPendingGpx());
@@ -335,9 +342,7 @@ class _HomeScreenState extends State<HomeScreen>
     _muteCtrl.dispose();
     AnchorService.instance.onStateChanged = null;
     _compassNotifier.dispose();
-    _posSub?.cancel();
-    _compassSub?.cancel();
-    _staleTimer?.cancel();
+    _sensors.dispose();
     super.dispose();
   }
 
@@ -359,25 +364,23 @@ class _HomeScreenState extends State<HomeScreen>
 
       if (keepAlive) {
         // Compass + 1 Hz tick stay running so the overlay/anchor keep updating.
-        _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
-        _startPositionStreamBackground(); // foreground-service backed GPS
+        _sensors.ensureTimer();
+        _sensors.startBackgroundGps(); // foreground-service backed GPS
       } else {
         // Battery-saving default: release everything.
-        _compassSub?.pause();
-        _staleTimer?.cancel();
-        _staleTimer = null;
-        _posSub?.cancel();
-        _posSub = null;
+        _sensors.pauseCompass();
+        _sensors.stopTimer();
+        _sensors.stopGps();
       }
     } else if (state == AppLifecycleState.resumed) {
       _screenOn = true;
       // Hide the overlay while the dashboard itself is in front (idempotent —
       // call whenever the feature is enabled, regardless of locally-tracked state).
       if (OverlayController.instance.enabled) OverlayController.instance.hide();
-      _compassSub?.resume();
+      _sensors.resumeCompass();
       _checkPocketLockOnResume();
-      _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
-      _startPositionStream();
+      _sensors.ensureTimer();
+      _sensors.startForegroundGps();
       _refreshChargingProfile(); // adapt nav GPS to charger state on each resume
       _requestImmediateGpsFix();
       _checkPendingGpx(); // handle files opened from other apps
@@ -409,8 +412,8 @@ class _HomeScreenState extends State<HomeScreen>
     }).catchError((_) {});
   }
 
-  // ── GPS staleness timer ────────────────────────────────────────────────────
-  void _onStaleTick(Timer _) {
+  // ── GPS staleness timer (driven by SensorLifecycle's 1 Hz tick) ────────────
+  void _onStaleTick() {
     if (!mounted) return;
     final sec = DateTime.now().difference(_lastGpsFix).inSeconds;
     // Conditional rebuild: only when the stale counter actually changes.
@@ -453,33 +456,35 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
-    _startPositionStream();
+    _sensors.startForegroundGps();
     _refreshChargingProfile(); // pick the right nav power profile at startup
+    _sensors.startCompass();
+  }
 
-    _compassSub = FlutterCompass.events?.listen((e) {
-      final h = e.heading;
-      if (h == null) return;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _lastCompassMs < _compassIntervalMs) return;
-      _lastCompassMs = now;
-      final corrected =
-          (h + DeclinationService.instance.declination + 360) % 360;
-      _compassHeading = corrected;
-      _compassNotifier.value = corrected;
-      if (!_compassReceived) _compassReceived = true;
-      // Feed the floating overlay at the compass rate (~10 Hz) when shown.
-      if (OverlayController.instance.isShown) _pushOverlay();
-      // Only rebuild when the heading has changed enough to be visible.
-      // Suppresses ~10 Hz redraws when stationary (compass jitter ±0.5°).
-      if (!_usingGps && mounted) {
-        final delta = (corrected - _lastRenderedCompassHeading).abs();
-        final wrapped = delta > 180 ? 360 - delta : delta; // handle 359°→1° wrap
-        if (wrapped >= DisplayTuning.compassRedrawMinDeltaDeg) {
-          _lastRenderedCompassHeading = corrected;
-          setState(() {});
-        }
+  // Compass event handler (declination correction + ~10 Hz throttle + redraw gate).
+  void _onCompassEvent(CompassEvent e) {
+    final h = e.heading;
+    if (h == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastCompassMs < _compassIntervalMs) return;
+    _lastCompassMs = now;
+    final corrected =
+        (h + DeclinationService.instance.declination + 360) % 360;
+    _compassHeading = corrected;
+    _compassNotifier.value = corrected;
+    if (!_compassReceived) _compassReceived = true;
+    // Feed the floating overlay at the compass rate (~10 Hz) when shown.
+    if (OverlayController.instance.isShown) _pushOverlay();
+    // Only rebuild when the heading has changed enough to be visible.
+    // Suppresses ~10 Hz redraws when stationary (compass jitter ±0.5°).
+    if (!_usingGps && mounted) {
+      final delta = (corrected - _lastRenderedCompassHeading).abs();
+      final wrapped = delta > 180 ? 360 - delta : delta; // handle 359°→1° wrap
+      if (wrapped >= DisplayTuning.compassRedrawMinDeltaDeg) {
+        _lastRenderedCompassHeading = corrected;
+        setState(() {});
       }
-    });
+    }
   }
 
   // The position stream is cancelled when the screen turns off (see lifecycle
@@ -557,31 +562,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  void _startPositionStream() {
-    _posSub?.cancel();
-    _posSub = Geolocator.getPositionStream(locationSettings: _locationSettings())
-        .listen(_onPositionUpdate, onError: (_) {});
-  }
-
-  // Foreground-service-backed stream for LIVE mode while the screen is off.
-  // Android silently stops GPS for background apps (API 26+) unless a
-  // foreground service is running. The persistent notification is mandatory
-  // by Android; it disappears when the screen turns on and the normal stream
-  // resumes. No extra permissions needed — foreground services with location
-  // type are exempt from ACCESS_BACKGROUND_LOCATION.
-  void _startPositionStreamBackground() {
-    _posSub?.cancel();
-    _posSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(
-        fg: const ForegroundNotificationConfig(
-          notificationTitle: 'QTH Helper',
-          notificationText: 'GPS tracking active',
-          enableWakeLock: true,
-        ),
-      ),
-    ).listen(_onPositionUpdate, onError: (_) {});
-  }
-
   /// Query the charger state and, if it changed while navigating, restart the
   /// foreground stream so the new power profile takes effect.  Cheap; the anchor
   /// stream is intentionally unaffected.
@@ -593,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted || charging == _charging) return;
     _charging = charging;
     // Only the navigating foreground stream depends on charger state.
-    if (_screenOn && !AnchorService.instance.isActive) _startPositionStream();
+    if (_screenOn && !AnchorService.instance.isActive) _sensors.startForegroundGps();
   }
 
   // ── Track azimuth ─────────────────────────────────────────────────────────
@@ -1001,7 +981,7 @@ class _HomeScreenState extends State<HomeScreen>
       'lat': lat, 'lon': lon, 'radius': radiusM, 'warnFrac': warnFrac,
     }).catchError((_) {});
     // Restart GPS stream with distanceFilter = 0 + intervalDuration = 3 s.
-    if (_gpsOnLock) _startPositionStreamBackground(); else _startPositionStream();
+    if (_gpsOnLock) _sensors.startBackgroundGps(); else _sensors.startForegroundGps();
     setState(() {});
     _showSettingSnack(
       'Anchor dropped · radius ${radiusM.round()} m · '
@@ -1019,8 +999,8 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _gpsOnLock = false);
       GetStorage().write('gps_on_lock', false);
     }
-    // Restore normal stream settings (distanceFilter=2, intervalDuration=10s).
-    _startPositionStream();
+    // Restore normal (foreground) stream settings — see GpsTuning.profile.
+    _sensors.startForegroundGps();
     setState(() {});
     _showSettingSnack(
       'Anchor lifted. GPS-on-lock ${prev ? 'stays on' : 'turned off'}.',
