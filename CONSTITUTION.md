@@ -735,17 +735,22 @@ tests.
 extraction is deliberately incremental (behind the existing tests, one concern at a
 time, never a big-bang):
 
-1. **Pull pure helpers into `utils/` so they can be unit-tested — STARTED.** Done so
-   far: heading-source selection (`utils/heading_source.dart`,
-   `heading_source_test.dart`); the `fitFontSize` layout helper
-   (`utils/text_fit.dart`, `text_fit_test.dart`); date/time/stale/population
-   formatters (`utils/formatting.dart`, `formatting_test.dart`). Remaining pure bits
-   can follow the same pattern. (Note: `_bearingMarkers` is view-model assembly that
+1. **Pull pure helpers into `utils/` so they can be unit-tested — DONE (first pass).**
+   heading-source selection (`utils/heading_source.dart`, `heading_source_test.dart`);
+   the `fitFontSize` layout helper (`utils/text_fit.dart`, `text_fit_test.dart`);
+   date/time/stale/population formatters (`utils/formatting.dart`,
+   `formatting_test.dart`). (Note: `_bearingMarkers` is view-model assembly that
    mixes services + `Palette`, not pure geometry — its math already lives in the
    tested `geo_utils.bearing`, so it stays in the widget.)
-2. **Next:** extract the GPS/compass/anchor lifecycle into a small controller object
-   the widget observes, separating sensor state from layout.
-3. **Then:** split the layout into per-section `StatefulWidget`s (heading, city, nav,
+2. **Move self-contained classes to their own files — DONE (first pass).** The four
+   `CustomPainter`s → `widgets/compass_painters.dart` (now public); the city/port
+   detail bottom sheet → `widgets/city_detail_sheet.dart` (`CityDetailSheet`). These
+   were already self-contained (all data via constructor), so the move was mechanical
+   and behaviour-preserving. `home_screen.dart` shrank from ~3360 to ~2450 lines.
+3. **Next:** extract the GPS/compass/anchor lifecycle into a small controller object
+   the widget observes, separating sensor state from layout. (Higher risk — touches
+   live state + the screen-on/off battery handling; do it behind on-device checks.)
+4. **Then:** split the layout into per-section `StatefulWidget`s (heading, city, nav,
    anchor, MOB), keeping the §3 no-scroll layout contract intact.
 
 Do not add unrelated concerns to `home_screen.dart` in the meantime; new sections
