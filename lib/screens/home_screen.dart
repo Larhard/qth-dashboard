@@ -9,7 +9,6 @@ import 'package:flutter_compass/flutter_compass.dart';
 import '../config/tuning.dart';
 import '../controllers/sensor_lifecycle.dart';
 import '../utils/heading_source.dart';
-import '../utils/text_fit.dart';
 import '../models/waypoint.dart';
 import '../services/city_service.dart';
 import '../services/declination_service.dart';
@@ -24,6 +23,9 @@ import '../services/overlay_service.dart';
 import '../widgets/arrow_widget.dart';
 import '../widgets/compass_painters.dart';
 import '../widgets/anchor_card.dart';
+import '../widgets/dashboard_vm.dart';
+import '../widgets/coords_section.dart';
+import '../widgets/city_section.dart';
 import '../widgets/rel_bearing_arrow.dart';
 import '../widgets/city_detail_sheet.dart';
 import '../widgets/anchor_alarm_overlay.dart';
@@ -173,33 +175,51 @@ class _HomeScreenState extends State<HomeScreen>
   /// Semantic colour resolver for the current mode (see lib/theme/palette.dart).
   Palette get _pal => Palette.of(_dayMode);
 
+  // Stable bundle of section action callbacks (built once in initState).
+  late final DashboardActions _actions;
+
+  // Immutable per-frame snapshot of the display state passed to section widgets.
+  DashboardVm _buildVm(Position pos) => DashboardVm(
+        dayMode: _dayMode,
+        timeUtc: _timeUtc,
+        speedUnit: _speedUnit,
+        locatorType: _locatorType,
+        gpsOnLock: _gpsOnLock,
+        pocketLockEnabled: _pocketLockEnabled,
+        position: pos,
+        heading: _heading,
+        headingColor: _headingColor,
+        secondaryHeadingColor: _secondaryHeadingColor,
+        sourceLabel: _sourceLabel,
+        headingValid: _intendedSourceHasData,
+        windRose: _headingArrowMode == HeadingArrowMode.windRose,
+        sourceAuto: _headingSourceMode == HeadingSourceMode.auto,
+        trackBearing: _track.bearing,
+        lastValidGpsHeading: _lastValidGpsHeading,
+        compassNotifier: _compassNotifier,
+        markers: _bearingMarkers(pos),
+        nearestCity: _nearestCity,
+        cityColor: _cityColor,
+        citySubColor: _citySubColor,
+        latStr: _cachedLatStr,
+        lonStr: _cachedLonStr,
+        locStr: _cachedLocStr,
+        altMeters: _cachedAlt,
+        accuracyMeters: _cachedAccuracy,
+        gpsClockOffset: _gpsClockOffset,
+        gpsStaleSeconds: _gpsStaleSeconds,
+      );
+
   // ── Night palette target: 4 levels of dim red, no other colours ─────────────
   //   Primary   0xFFCC3333  — main data (heading degrees, coordinates)
   //   Secondary 0xFF882222  — supporting (speed, city name, bearing, MOB name)
   //   Tertiary  0xFF661111  — labels (source, TRK, alt/acc, hints)
   //   Ghost     0xFF441111  — barely-there (dividers, secondary arrow, borders)
 
-  // Text hierarchy
-  Color get _cText1 => _pal.textPrimary;
+  // Text hierarchy (coords-only colours now live in CoordsSection)
   Color get _cText2 => _pal.textSecondary;
   Color get _cText3 => _pal.pick(kDFg2, kN3);
-  // Element-specific
-  Color get _cSpeed   => _pal.textTertiary;
-  Color get _cAltAcc  => _pal.textTertiary;
-  Color get _cStale   => _pal.stale;
-  // IARU locator — green (same family as GPS heading and UTC clock)
-  Color get _cLocator      => _pal.pick(kDGps, kN2);
-  Color get _cLocatorLabel => _pal.gpsLabel;
-  // MGRS — amber-orange family
-  Color get _cMgrs      => _pal.amber;
-  Color get _cMgrsLabel => _pal.amberLabel;
-  // Clock: UTC shares GPS green; local time shares MGRS amber
-  Color get _cTime => _dayMode
-      ? (_timeUtc ? kDGps : kDAmb)
-      : kN2;
-  Color get _cTimeLabel => _dayMode
-      ? (_timeUtc ? kDGpsL : kDAmbs)
-      : kN3;
+  Color get _cSpeed => _pal.textTertiary;
   // GPS-lock toggle indicator
   Color get _cSaveLock => _pal.pick(kDAmb, kN3);
   Color get _cLiveLock => _pal.port;
@@ -319,6 +339,20 @@ class _HomeScreenState extends State<HomeScreen>
         }
       });
     AnchorService.instance.onStateChanged = _onAnchorStateChanged;
+    _actions = DashboardActions(
+      toggleHeadingArrowMode: _toggleHeadingArrowMode,
+      toggleHeadingSource: _toggleHeadingSourceMode,
+      toggleCoordFormat: _toggleCoordFormat,
+      toggleLocatorType: _toggleLocatorType,
+      toggleTimeZone: _toggleTimeZone,
+      cycleSpeedUnit: _cycleSpeedUnit,
+      toggleCityMode: _toggleCityMode,
+      toggleGpsLock: _toggleGpsLock,
+      togglePocketLock: _togglePocketLock,
+      openWaypoints: _openWaypoints,
+      copy: _copyToClipboard,
+      showCityDetails: _showCityDetails,
+    );
     _sensors = SensorLifecycle(
       onPosition: _onPositionUpdate,
       onCompass: _onCompassEvent,
@@ -1231,6 +1265,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildPortrait(Position pos) {
     final anchoring = AnchorService.instance.isActive;
     final nav = WaypointService.instance.active;
+    final vm = _buildVm(pos);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
       // ── Layout contract (see CONSTITUTION §3) ───────────────────────────
@@ -1243,13 +1278,13 @@ class _HomeScreenState extends State<HomeScreen>
         children: [
           _headingSection(pos),
           _divider(),
-          _coordsSection(),
+          CoordsSection(vm: vm, actions: _actions, landscape: false),
           _divider(),
           _adaptiveSecondary(children: [
             if (_nearestCity != null)
               anchoring
-                  ? _citySectionCompact(_nearestCity!)
-                  : _citySection(_nearestCity!),
+                  ? CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.compact)
+                  : CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.portrait),
             if (anchoring) ...[
               _navWptCompact(pos),
               const SizedBox(height: 4),
@@ -1297,33 +1332,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Compact city row when anchoring: arrow+dot-ring, name, bearing°, distance.
-  // Mirrors the nav waypoint compact row so both rows look consistent.
-  Widget _citySectionCompact(NearestCity nc) {
-    return GestureDetector(
-      onTap: _toggleCityMode,
-      onLongPress: () => _showCityDetails(nc),
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(children: [
-          _arrowWithRelRing(nc.bearingDeg.toDouble(), _cityColor, 22),
-          const SizedBox(width: 6),
-          Expanded(child: Text(nc.city.name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: _cityColor, fontWeight: FontWeight.w600))),
-          Text('${nc.bearingDeg.round()}°',
-              style: TextStyle(fontSize: 12,
-                  color: _citySubColor,
-                  fontFeatures: const [FontFeature.tabularFigures()])),
-          const SizedBox(width: 6),
-          Text(formatDistanceUnit(nc.distKm, _speedUnit),
-              style: TextStyle(fontSize: 12, color: _cityColor,
-                  fontFeatures: const [FontFeature.tabularFigures()])),
-        ]),
-      ),
-    );
-  }
 
 
   // ── Landscape layout ─────────────────────────────────────────────────────
@@ -1341,6 +1349,7 @@ class _HomeScreenState extends State<HomeScreen>
   // Font sizes are stepped down ~15 % from portrait — legible without
   // constantly shrinking with each new feature.
   Widget _buildLandscape(Position pos) {
+    final vm = _buildVm(pos);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       // CrossAxisAlignment.stretch gives the right column the same height as the
@@ -1359,7 +1368,7 @@ class _HomeScreenState extends State<HomeScreen>
               children: [
                 _headingSectionLandscape(pos),
                 _dividerCompact(),
-                _coordsSectionLandscape(),
+                CoordsSection(vm: vm, actions: _actions, landscape: true),
               ],
             ),
           ),
@@ -1381,8 +1390,8 @@ class _HomeScreenState extends State<HomeScreen>
                   _adaptiveSecondary(children: [
                     if (_nearestCity != null) ...[
                       AnchorService.instance.isActive
-                          ? _citySectionCompact(_nearestCity!)
-                          : _citySectionLandscape(_nearestCity!),
+                          ? CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.compact)
+                          : CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.landscape),
                       _dividerCompact(),
                     ],
                     if (!AnchorService.instance.isActive)
@@ -1740,157 +1749,6 @@ class _HomeScreenState extends State<HomeScreen>
     ));
   }
 
-  // ── Coordinates ───────────────────────────────────────────────────────────
-  Widget _coordsSection() {
-    // Coordinates are "medium" priority — smaller than the locator (critical)
-    // but bigger than altitude (tertiary). Long-press cycles the format.
-    final coordStyle = TextStyle(
-      fontSize: 22,
-      color: _cText1,
-      fontWeight: FontWeight.w600,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      GestureDetector(
-        onTap: () => _copyToClipboard('$_cachedLatStr\n$_cachedLonStr'),
-        onLongPress: _toggleCoordFormat,
-        behavior: HitTestBehavior.opaque,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_cachedLatStr, style: coordStyle),
-          const SizedBox(height: 2),
-          Text(_cachedLonStr, style: coordStyle),
-        ]),
-      ),
-      const SizedBox(height: 8),
-      _locatorRow(fontSize: 32, letterSpacing: 4.0),
-      const SizedBox(height: 6),
-      _altAccuracyRow(),
-      const SizedBox(height: 3),
-      _timeRow(),
-    ]);
-  }
-
-  Widget _coordsSectionLandscape() {
-    final coordStyle = TextStyle(
-      fontSize: 22,
-      color: _cText1,
-      fontWeight: FontWeight.w600,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      GestureDetector(
-        onTap: () => _copyToClipboard('$_cachedLatStr\n$_cachedLonStr'),
-        onLongPress: _toggleCoordFormat,
-        behavior: HitTestBehavior.opaque,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_cachedLatStr, style: coordStyle),
-          const SizedBox(height: 2),
-          Text(_cachedLonStr, style: coordStyle),
-        ]),
-      ),
-      const SizedBox(height: 6),
-      _locatorRow(fontSize: 24, letterSpacing: 2.5),
-      const SizedBox(height: 4),
-      _altAccuracyRow(),
-      const SizedBox(height: 3),
-      _timeRow(fontSize: 15.0),
-    ]);
-  }
-
-  // Single locator row used by both portrait and landscape coords sections.
-  // IARU (green) vs MGRS (amber) — color and label make the type obvious.
-  // Long-press toggles the type; tap copies the value.
-  Widget _locatorRow({required double fontSize, required double letterSpacing}) {
-    final isMaidenhead = _locatorType == LocatorType.maidenhead;
-    final locColor = isMaidenhead ? _cLocator : _cMgrs;
-    final labelColor = isMaidenhead ? _cLocatorLabel : _cMgrsLabel;
-    final locFontSize = isMaidenhead ? fontSize : fontSize * 0.72;
-    final locLetterSpacing = isMaidenhead ? letterSpacing : 0.5;
-    final label = isMaidenhead ? 'IARU' : 'MGRS';
-
-    return GestureDetector(
-      onTap: () => _copyToClipboard(_cachedLocStr),
-      onLongPress: _toggleLocatorType,
-      behavior: HitTestBehavior.opaque,
-      child: Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-        Text(_cachedLocStr,
-            style: TextStyle(
-                fontSize: locFontSize,
-                color: locColor,
-                fontWeight: FontWeight.w700,
-                letterSpacing: locLetterSpacing,
-                fontFeatures: const [FontFeature.tabularFigures()])),
-        const SizedBox(width: 8),
-        Text(label,
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: labelColor,
-                letterSpacing: 1.5)),
-      ]),
-    );
-  }
-
-  Widget _altAccuracyRow() {
-    final stale = _gpsStaleSeconds > 10;
-    final altStr = formatAlt(_cachedAlt, _speedUnit);
-    final accStr = '±${_cachedAccuracy.round()} m';
-    final staleStr = stale ? '  GPS ${formatStaleDuration(_gpsStaleSeconds)}' : '';
-    return Row(children: [
-      Text('alt $altStr',
-          style: TextStyle(
-              fontSize: 14,
-              color: _cAltAcc,
-              fontFeatures: const [FontFeature.tabularFigures()])),
-      const SizedBox(width: 12),
-      Text('$accStr$staleStr',
-          style: TextStyle(
-              fontSize: 14,
-              color: stale ? _cStale : _cAltAcc,
-              fontFeatures: const [FontFeature.tabularFigures()])),
-    ]);
-  }
-
-  Widget _timeRow({double fontSize = 18.0}) {
-    // Compute the current GPS-calibrated time on every build.
-    // _gpsClockOffset is updated on each GPS fix; between fixes the system
-    // clock advances normally, so the display ticks every second in real time.
-    // Before the first GPS fix the offset is zero and the system clock is shown.
-    final now = DateTime.now().add(_gpsClockOffset);
-    final dateStr = formatDateYmd(now, utc: _timeUtc);
-    final timeStr = formatTimeHms(now, utc: _timeUtc);
-    final color = _cTime;
-    final label = _timeUtc ? 'UTC' : 'LCL';
-    final labelColor = _cTimeLabel;
-    final labelSize = fontSize >= 16 ? 12.0 : 11.0;
-    return GestureDetector(
-      onLongPress: _toggleTimeZone,
-      behavior: HitTestBehavior.opaque,
-      child: Row(children: [
-        Text(dateStr,
-            style: TextStyle(
-                fontSize: fontSize,
-                color: color,
-                fontFeatures: const [FontFeature.tabularFigures()])),
-        const SizedBox(width: 8),
-        Text(timeStr,
-            style: TextStyle(
-                fontSize: fontSize,
-                color: color,
-                fontFeatures: const [FontFeature.tabularFigures()])),
-        const SizedBox(width: 6),
-        Text(label,
-            style: TextStyle(
-                fontSize: labelSize,
-                fontWeight: FontWeight.w700,
-                color: labelColor,
-                letterSpacing: 1.5)),
-      ]),
-    );
-  }
-
   // ── City ──────────────────────────────────────────────────────────────────
   void _showCityDetails(NearestCity nc) {
     HapticFeedback.lightImpact();
@@ -1908,125 +1766,6 @@ class _HomeScreenState extends State<HomeScreen>
         coordFormat: _coordFormat,
         locatorType: _locatorType,
       ),
-    );
-  }
-
-  Widget _citySection(NearestCity nc) {
-    final color = _cityColor;
-    final subColor = _citySubColor;
-    return GestureDetector(
-      onTap: _toggleCityMode,
-      onLongPress: () => _showCityDetails(nc),
-      behavior: HitTestBehavior.opaque,
-      child: Row(children: [
-        _arrowWithRelRing(nc.bearingDeg, color, 60),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          LayoutBuilder(builder: (_, bc) {
-            final fs = fitFontSize(nc.city.name, bc.maxWidth, maxSize: 32, minSize: 18);
-            return Text(nc.city.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: fs, fontWeight: FontWeight.w700, color: color));
-          }),
-          Row(children: [
-            Text('${nc.bearingDeg.round()}°',
-                style: TextStyle(
-                    fontSize: 22,
-                    color: subColor,
-                    fontFeatures: const [FontFeature.tabularFigures()])),
-            const SizedBox(width: 18),
-            Text(formatDistanceUnit(nc.distKm, _speedUnit),
-                style: TextStyle(
-                    fontSize: 22,
-                    color: color,
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: const [FontFeature.tabularFigures()])),
-            const SizedBox(width: 14),
-            Flexible(
-              child: Text(nc.city.country,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: subColor.withValues(alpha: 0.7),
-                      fontFeatures: const [FontFeature.tabularFigures()])),
-            ),
-          ]),
-          if (nc.city.vhf.isNotEmpty)
-            GestureDetector(
-              onTap: () => _copyToClipboard('VHF ${nc.city.vhf}'),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.radio, size: 14, color: subColor),
-                const SizedBox(width: 4),
-                Text('VHF ${nc.city.vhf}',
-                    style: TextStyle(
-                        fontSize: 16,
-                        color: color,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.5)),
-              ]),
-            ),
-          if (nc.city.callSign.isNotEmpty)
-            Text(nc.city.callSign,
-                style: TextStyle(
-                    fontSize: 14,
-                    color: subColor.withValues(alpha: 0.8),
-                    letterSpacing: 2.0)),
-        ]),
-        ),   // Expanded
-      ]),
-    );
-  }
-
-  Widget _citySectionLandscape(NearestCity nc) {
-    final color = _cityColor;
-    final subColor = _citySubColor;
-    return GestureDetector(
-      onTap: _toggleCityMode,
-      onLongPress: () => _showCityDetails(nc),
-      behavior: HitTestBehavior.opaque,
-      child: Row(children: [
-        _arrowWithRelRing(nc.bearingDeg, color, 44),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Flexible(
-                child: LayoutBuilder(builder: (_, bc) {
-                  // 24px for short names; fitFontSize shrinks dynamically so long
-                  // names still fit in 2 lines without overflowing the landscape layout.
-                  final fs = fitFontSize(nc.city.name, bc.maxWidth, maxSize: 24, minSize: 10);
-                  return Text(nc.city.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: fs, fontWeight: FontWeight.w700, color: color));
-                }),
-              ),
-              const SizedBox(width: 6),
-              Text(nc.city.country,
-                  style: TextStyle(fontSize: 12, color: subColor.withValues(alpha: 0.7))),
-            ]),
-            Row(children: [
-              Text('${nc.bearingDeg.round()}°',
-                  style: TextStyle(
-                      fontSize: 16,
-                      color: subColor,
-                      fontFeatures: const [FontFeature.tabularFigures()])),
-              const SizedBox(width: 10),
-              Text(formatDistanceUnit(nc.distKm, _speedUnit),
-                  style: TextStyle(
-                      fontSize: 16,
-                      color: color,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()])),
-            ]),
-          ]),
-        ),
-      ]),
     );
   }
 
