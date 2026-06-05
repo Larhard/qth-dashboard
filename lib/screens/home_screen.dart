@@ -9,6 +9,8 @@ import 'package:get_storage/get_storage.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import '../config/tuning.dart';
+import '../utils/heading_source.dart';
+import '../utils/text_fit.dart';
 import '../models/waypoint.dart';
 import '../services/city_service.dart';
 import '../services/declination_service.dart';
@@ -39,7 +41,6 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Constants ───────────────────────────────────────────────────────────
   // Tunable values live in lib/config/tuning.dart; these are local aliases so
   // call sites stay terse.  Adjust the value in tuning.dart, not here.
-  static const _gpsThresholdMs = GpsTuning.gpsHeadingMinSpeed;
   static const _compassIntervalMs = DisplayTuning.compassMinIntervalMs;
   static const _cityRecalcThresholdM = DisplayTuning.cityRecalcThresholdM;
 
@@ -224,72 +225,47 @@ class _HomeScreenState extends State<HomeScreen>
 
   bool _gpsSpeedValid() {
     final p = _position;
-    return p != null && p.speed >= _gpsThresholdMs && !p.heading.isNaN && p.heading >= 0;
+    return p != null && gpsHeadingUsable(p.speed, p.heading);
   }
 
-  // Enum shorthand for the three sources.
-  static const int _srcMag = 0, _srcTrk = 1, _srcGps = 2;
+  // Heading-source selection is pure logic (see utils/heading_source.dart, tested
+  // in heading_source_test.dart). This widget only supplies the live inputs.
+  HeadingChoice get _hc => chooseHeadingSource(
+        mode: _headingSourceMode,
+        gpsUsable: _gpsSpeedValid(),
+        trkAvailable: _track.bearing != null,
+      );
 
-  // ── Computed source — used for actual heading VALUE and compass-listener logic ──
-  // Falls back to MAG when GPS/TRK data isn't available so the arrow keeps
-  // rotating via the live compass while the user waits for a GPS/TRK signal.
-  int get _computedSourceId {
-    if (_headingSourceMode == HeadingSourceMode.magOnly) return _srcMag;
-    if (_gpsSpeedValid()) return _srcGps;
-    if (_track.bearing != null) return _srcTrk;
-    return _srcMag; // MAG fallback — drives the arrow while waiting
-  }
+  // True when GPS/TRK data is actually available — drives live degrees vs "---".
+  bool get _intendedSourceHasData => _hc.hasData;
 
-  // ── Display source — used for LABEL and COLOUR shown to the user ───────────
-  // In auto mode, always shows GPS or TRK (never silently shows MAG).
-  // When no data is available yet it shows TRK, communicating "waiting for signal".
-  int get _primarySourceId {
-    if (_headingSourceMode == HeadingSourceMode.magOnly) return _srcMag;
-    if (_gpsSpeedValid()) return _srcGps;
-    if (_track.bearing != null) return _srcTrk;
-    return _srcTrk; // auto mode, no data yet → display as TRK (waiting)
-  }
-
-  // True when GPS/TRK data is actually available.
-  // Used to decide whether to display a live degree value or "---".
-  bool get _intendedSourceHasData =>
-      _headingSourceMode == HeadingSourceMode.magOnly ||
-      _gpsSpeedValid() ||
-      _track.bearing != null;
-
-  // Compass listener uses _computedSourceId: when waiting for TRK/GPS, the
-  // computed source is still MAG (_srcMag), so _usingGps = false and the
-  // compass listener keeps calling setState → arrow rotates live.
-  bool get _usingGps => _computedSourceId != _srcMag;
+  // Compass listener: while waiting for TRK/GPS the computed source is still MAG,
+  // so this stays false and the listener keeps calling setState → arrow rotates.
+  bool get _usingGps => _hc.usingGps;
 
   double get _heading {
-    // In auto mode before GPS/TRK data arrives: return 0.0 so the ring and any
-    // primary arrow are frozen (pointing North) rather than silently following
-    // MAG.  The secondary MAG arrow/dash continues to update via ValueListenableBuilder.
-    if (!_intendedSourceHasData && _headingSourceMode == HeadingSourceMode.auto) {
+    // In auto mode before GPS/TRK data arrives: freeze the ring/primary arrow at
+    // North rather than silently following MAG. The secondary MAG arrow/dash still
+    // updates via ValueListenableBuilder.
+    if (!_hc.hasData && _headingSourceMode == HeadingSourceMode.auto) {
       return 0.0;
     }
-    return switch (_computedSourceId) {
-      _srcGps => _position?.heading ?? _compassHeading,
-      _srcTrk => _track.bearing ?? _compassHeading,
-      _       => _compassHeading,
+    return switch (_hc.computed) {
+      HeadingSource.gps => _position?.heading ?? _compassHeading,
+      HeadingSource.trk => _track.bearing ?? _compassHeading,
+      HeadingSource.mag => _compassHeading,
     };
   }
 
-  // Colour and label use the DISPLAY source (_primarySourceId).
-  // GPS=green (kDGps), TRK=yellow (kDTrk), MAG=white (kDFg0).
-  // Night: all shift to reds with distinct brightness.
-  Color get _headingColor => switch (_primarySourceId) {
-    _srcGps => _pal.gps,
-    _srcTrk => _pal.trk,
-    _       => _pal.pick(kDFg0, kN2),
+  // Colour and label use the DISPLAY source.
+  // GPS=green (kDGps), TRK=yellow (kDTrk), MAG=white (kDFg0); night shifts to reds.
+  Color get _headingColor => switch (_hc.display) {
+    HeadingSource.gps => _pal.gps,
+    HeadingSource.trk => _pal.trk,
+    HeadingSource.mag => _pal.pick(kDFg0, kN2),
   };
 
-  String get _sourceLabel => switch (_primarySourceId) {
-    _srcGps => 'GPS',
-    _srcTrk => 'TRK',
-    _       => 'MAG',
-  };
+  String get _sourceLabel => _hc.display.label;
 
   Color get _secondaryHeadingColor {
     if (_headingSourceMode == HeadingSourceMode.auto) {
@@ -791,47 +767,6 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _timeUtc = !_timeUtc);
     saveTimeUtc(_timeUtc);
     HapticFeedback.lightImpact();
-  }
-
-  /// Returns the largest font size ≤ [maxSize] at which [text] fits inside
-  /// [maxWidth] in at most [maxLines] lines.
-  ///
-  /// Uses TextPainter for exact measurement, so no unnecessary shrinkage occurs:
-  /// names that already fit in 2 lines at [maxSize] are returned unchanged.
-  /// Never returns less than [minSize].
-  static double _fitFontSize(
-    String text,
-    double maxWidth, {
-    double maxSize = 32,
-    double minSize = 18,
-    int maxLines = 2,
-    FontWeight weight = FontWeight.w700,
-  }) {
-    if (maxWidth <= 0 || text.isEmpty) return maxSize;
-    final tp = TextPainter(
-      text: TextSpan(text: text, style: TextStyle(fontSize: maxSize, fontWeight: weight)),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: maxWidth);
-    final lines = tp.computeLineMetrics().length;
-    if (lines <= maxLines) return maxSize;
-    return (maxSize * maxLines / lines).clamp(minSize, maxSize);
-  }
-
-  static String _staleDuration(int s) {
-    if (s < 60) return '${s}s';
-    final m = s ~/ 60;
-    final rem = s % 60;
-    return rem > 0 ? '${m}m ${rem}s' : '${m}m';
-  }
-
-  static String _fmtDate(DateTime dt, bool utc) {
-    final d = utc ? dt.toUtc() : dt.toLocal();
-    return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-  }
-
-  static String _fmtTime(DateTime dt, bool utc) {
-    final d = utc ? dt.toUtc() : dt.toLocal();
-    return '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}:${d.second.toString().padLeft(2,'0')}';
   }
 
   void _syncPocketLock() {
@@ -2121,7 +2056,7 @@ class _HomeScreenState extends State<HomeScreen>
     final stale = _gpsStaleSeconds > 10;
     final altStr = formatAlt(_cachedAlt, _speedUnit);
     final accStr = '±${_cachedAccuracy.round()} m';
-    final staleStr = stale ? '  GPS ${_staleDuration(_gpsStaleSeconds)}' : '';
+    final staleStr = stale ? '  GPS ${formatStaleDuration(_gpsStaleSeconds)}' : '';
     return Row(children: [
       Text('alt $altStr',
           style: TextStyle(
@@ -2143,8 +2078,8 @@ class _HomeScreenState extends State<HomeScreen>
     // clock advances normally, so the display ticks every second in real time.
     // Before the first GPS fix the offset is zero and the system clock is shown.
     final now = DateTime.now().add(_gpsClockOffset);
-    final dateStr = _fmtDate(now, _timeUtc);
-    final timeStr = _fmtTime(now, _timeUtc);
+    final dateStr = formatDateYmd(now, utc: _timeUtc);
+    final timeStr = formatTimeHms(now, utc: _timeUtc);
     final color = _cTime;
     final label = _timeUtc ? 'UTC' : 'LCL';
     final labelColor = _cTimeLabel;
@@ -2208,7 +2143,7 @@ class _HomeScreenState extends State<HomeScreen>
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           LayoutBuilder(builder: (_, bc) {
-            final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 32, minSize: 18);
+            final fs = fitFontSize(nc.city.name, bc.maxWidth, maxSize: 32, minSize: 18);
             return Text(nc.city.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -2280,9 +2215,9 @@ class _HomeScreenState extends State<HomeScreen>
             Row(children: [
               Flexible(
                 child: LayoutBuilder(builder: (_, bc) {
-                  // 24px for short names; _fitFontSize shrinks dynamically so long
+                  // 24px for short names; fitFontSize shrinks dynamically so long
                   // names still fit in 2 lines without overflowing the landscape layout.
-                  final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 24, minSize: 10);
+                  final fs = fitFontSize(nc.city.name, bc.maxWidth, maxSize: 24, minSize: 10);
                   return Text(nc.city.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -2471,12 +2406,12 @@ class _HomeScreenState extends State<HomeScreen>
               // column reads as part of the card rather than secondary info.
               _wptDataRow(
                 left: formatLatF(wp.lat, _coordFormat),
-                right: _fmtDate(wp.timestamp, _timeUtc),
+                right: formatDateYmd(wp.timestamp, utc: _timeUtc),
                 fontSize: coordFontSize,
               ),
               _wptDataRow(
                 left: formatLonF(wp.lon, _coordFormat),
-                right: '${_fmtTime(wp.timestamp, _timeUtc)} ${_timeUtc ? 'UTC' : 'LCL'}',
+                right: '${formatTimeHms(wp.timestamp, utc: _timeUtc)} ${_timeUtc ? 'UTC' : 'LCL'}',
                 fontSize: coordFontSize,
               ),
               const SizedBox(height: 2),
@@ -2585,7 +2520,7 @@ class _CityDetailSheet extends StatelessWidget {
     if (!_isPort) {
       buf.writeln('LOCATION');
       line('Country', city.country);
-      if (city.population > 0) line('Population', _fmtPop(city.population));
+      if (city.population > 0) line('Population', formatPopulation(city.population));
       line('Timezone', city.timezone);
     }
 
@@ -2804,13 +2739,6 @@ class _CityDetailSheet extends StatelessWidget {
     );
   }
 
-  String _fmtPop(int pop) {
-    if (pop <= 0) return '';
-    if (pop >= 1000000) return '${(pop / 1000000).toStringAsFixed(1)}M';
-    if (pop >= 1000) return '${(pop / 1000).toStringAsFixed(0)}k';
-    return '$pop';
-  }
-
   String _shelter(String s) => switch (s) {
     'E' => 'Excellent',
     'G' => 'Good',
@@ -2906,7 +2834,7 @@ class _CityDetailSheet extends StatelessWidget {
                 if (!_isPort) ...[
                   _section('Location'),
                   _row(ctx, 'Country', city.country),
-                  _row(ctx, 'Population', _fmtPop(city.population)),
+                  _row(ctx, 'Population', formatPopulation(city.population)),
                   _row(ctx, 'Timezone', city.timezone),
                 ],
 

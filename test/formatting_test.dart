@@ -49,6 +49,41 @@ void main() {
     });
   });
 
+  group('formatPopulation', () {
+    test('tiers: M, k, raw, and empty for non-positive', () {
+      expect(formatPopulation(0), '');
+      expect(formatPopulation(-5), '');
+      expect(formatPopulation(800), '800');
+      expect(formatPopulation(45000), '45k');
+      expect(formatPopulation(1200000), '1.2M');
+    });
+  });
+
+  group('formatStaleDuration (GPS stale counter — seconds → minutes only)', () {
+    test('seconds below a minute', () {
+      expect(formatStaleDuration(0), '0s');
+      expect(formatStaleDuration(42), '42s');
+      expect(formatStaleDuration(59), '59s');
+    });
+    test('minutes, with seconds omitted when zero', () {
+      expect(formatStaleDuration(90), '1m 30s');
+      expect(formatStaleDuration(120), '2m');
+    });
+  });
+
+  group('formatDateYmd / formatTimeHms (zero-padded, UTC or local)', () {
+    test('UTC formatting is deterministic', () {
+      final dt = DateTime.utc(2024, 3, 5, 9, 7, 3);
+      expect(formatDateYmd(dt, utc: true), '2024-03-05');
+      expect(formatTimeHms(dt, utc: true), '09:07:03');
+    });
+    test('local DateTime formatted as local components', () {
+      final dt = DateTime(2024, 12, 31, 23, 4, 0); // local
+      expect(formatDateYmd(dt, utc: false), '2024-12-31');
+      expect(formatTimeHms(dt, utc: false), '23:04:00');
+    });
+  });
+
   group('formatElapsed (granularity buckets)', () {
     test('< 60 s → seconds', () {
       expect(formatElapsed(const Duration(seconds: 42)), '42s');

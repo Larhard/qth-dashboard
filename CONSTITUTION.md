@@ -730,14 +730,23 @@ native authority with liveness-based GPS-loss and `MODE_STATIC` audio; machine-
 checkable rules (night-palette purity, cross-language threshold sync) backed by
 tests.
 
-**Next (the main remaining debt):** `home_screen.dart` is still a large
+**Decomposing `home_screen.dart` — in progress.** It is still a large
 `StatefulWidget` managing a unified state machine for all navigation sensors. The
-planned, incremental extraction (do it behind the existing tests, one concern at a
+extraction is deliberately incremental (behind the existing tests, one concern at a
 time, never a big-bang):
-1. Pull pure helpers (heading-source selection, marker/bearing math) into `utils/`
-   so they can be unit-tested.
-2. Extract the GPS/compass/anchor lifecycle into a small controller object the
-   widget observes, separating sensor state from layout.
-3. Split the layout into per-section `StatefulWidget`s (heading, city, nav, anchor,
-   MOB), keeping the §3 no-scroll layout contract intact.
-Do not add unrelated concerns to `home_screen.dart` in the meantime.
+
+1. **Pull pure helpers into `utils/` so they can be unit-tested — STARTED.** Done so
+   far: heading-source selection (`utils/heading_source.dart`,
+   `heading_source_test.dart`); the `fitFontSize` layout helper
+   (`utils/text_fit.dart`, `text_fit_test.dart`); date/time/stale/population
+   formatters (`utils/formatting.dart`, `formatting_test.dart`). Remaining pure bits
+   can follow the same pattern. (Note: `_bearingMarkers` is view-model assembly that
+   mixes services + `Palette`, not pure geometry — its math already lives in the
+   tested `geo_utils.bearing`, so it stays in the widget.)
+2. **Next:** extract the GPS/compass/anchor lifecycle into a small controller object
+   the widget observes, separating sensor state from layout.
+3. **Then:** split the layout into per-section `StatefulWidget`s (heading, city, nav,
+   anchor, MOB), keeping the §3 no-scroll layout contract intact.
+
+Do not add unrelated concerns to `home_screen.dart` in the meantime; new sections
+belong in their own widget/file, and new pure logic in a tested `utils/` module.

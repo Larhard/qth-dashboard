@@ -66,6 +66,37 @@ String speedUnitLabel(SpeedUnit unit) {
   }
 }
 
+/// Compact population: `1.2M`, `45k`, `800`; empty string for non-positive.
+String formatPopulation(int pop) {
+  if (pop <= 0) return '';
+  if (pop >= 1000000) return '${(pop / 1000000).toStringAsFixed(1)}M';
+  if (pop >= 1000) return '${(pop / 1000).toStringAsFixed(0)}k';
+  return '$pop';
+}
+
+/// Short GPS-staleness label, seconds → minutes only (never hours):
+///   < 60 s → "42s";  else "5m 30s" (seconds omitted when zero).
+String formatStaleDuration(int seconds) {
+  if (seconds < 60) return '${seconds}s';
+  final m = seconds ~/ 60;
+  final rem = seconds % 60;
+  return rem > 0 ? '${m}m ${rem}s' : '${m}m';
+}
+
+/// ISO-style calendar date `YYYY-MM-DD`, in UTC or local time.
+String formatDateYmd(DateTime dt, {required bool utc}) {
+  final d = utc ? dt.toUtc() : dt.toLocal();
+  return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+}
+
+/// 24-hour clock `HH:MM:SS`, in UTC or local time.
+String formatTimeHms(DateTime dt, {required bool utc}) {
+  final d = utc ? dt.toUtc() : dt.toLocal();
+  return '${d.hour.toString().padLeft(2, '0')}:'
+      '${d.minute.toString().padLeft(2, '0')}:'
+      '${d.second.toString().padLeft(2, '0')}';
+}
+
 /// Human-readable elapsed duration, two levels of granularity:
 ///   < 60 s   → "42s"
 ///   < 60 min → "5m 30s"   (seconds component omitted when zero)
