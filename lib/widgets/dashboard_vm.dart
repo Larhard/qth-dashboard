@@ -15,6 +15,9 @@ import '../utils/formatting.dart' show SpeedUnit;
 /// Sections derive their own *trivial* palette colours from `vm.dayMode`; the VM
 /// carries only the colours that need screen-side logic (heading source, city tier).
 
+/// Which card a hold-to-clear gesture targets (MOB vs nav waypoint).
+enum WptHoldTarget { emergency, nav }
+
 @immutable
 class DashboardActions {
   final VoidCallback toggleHeadingArrowMode;
@@ -27,8 +30,11 @@ class DashboardActions {
   final VoidCallback toggleGpsLock;
   final VoidCallback togglePocketLock;
   final VoidCallback openWaypoints;
+  final VoidCallback addMob;
   final void Function(String text) copy;
   final void Function(NearestCity nc) showCityDetails;
+  final void Function(WptHoldTarget target) startClear;
+  final VoidCallback cancelClear;
 
   const DashboardActions({
     required this.toggleHeadingArrowMode,
@@ -41,8 +47,11 @@ class DashboardActions {
     required this.toggleGpsLock,
     required this.togglePocketLock,
     required this.openWaypoints,
+    required this.addMob,
     required this.copy,
     required this.showCityDetails,
+    required this.startClear,
+    required this.cancelClear,
   });
 }
 
@@ -53,8 +62,13 @@ class DashboardVm {
   final bool timeUtc;
   final SpeedUnit speedUnit;
   final LocatorType locatorType;
+  final CoordFormat coordFormat;
   final bool gpsOnLock;
   final bool pocketLockEnabled;
+
+  // Hold-to-clear gesture state (MOB / nav waypoint cards).
+  final WptHoldTarget? holdTarget;
+  final double clearProgress;
 
   // Position + heading.
   final Position position;
@@ -89,8 +103,11 @@ class DashboardVm {
     required this.timeUtc,
     required this.speedUnit,
     required this.locatorType,
+    required this.coordFormat,
     required this.gpsOnLock,
     required this.pocketLockEnabled,
+    required this.holdTarget,
+    required this.clearProgress,
     required this.position,
     required this.heading,
     required this.headingColor,

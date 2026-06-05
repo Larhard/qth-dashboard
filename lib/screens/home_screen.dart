@@ -9,7 +9,6 @@ import 'package:flutter_compass/flutter_compass.dart';
 import '../config/tuning.dart';
 import '../controllers/sensor_lifecycle.dart';
 import '../utils/heading_source.dart';
-import '../models/waypoint.dart';
 import '../services/city_service.dart';
 import '../services/declination_service.dart';
 import '../services/waypoint_service.dart';
@@ -21,19 +20,18 @@ import '../utils/gpx_utils.dart';
 import '../services/anchor_service.dart';
 import '../services/overlay_service.dart';
 import '../widgets/arrow_widget.dart';
-import '../widgets/compass_painters.dart';
 import '../widgets/anchor_card.dart';
 import '../widgets/dashboard_vm.dart';
 import '../widgets/coords_section.dart';
 import '../widgets/city_section.dart';
-import '../widgets/rel_bearing_arrow.dart';
+import '../widgets/heading_section.dart';
+import '../widgets/waypoint_sections.dart';
 import '../widgets/city_detail_sheet.dart';
 import '../widgets/anchor_alarm_overlay.dart';
 import 'debug_screen.dart';
 import 'waypoints_screen.dart';
 
 /// Which waypoint card the current hold gesture is targeting.
-enum _WptHoldTarget { emergency, nav }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -184,8 +182,11 @@ class _HomeScreenState extends State<HomeScreen>
         timeUtc: _timeUtc,
         speedUnit: _speedUnit,
         locatorType: _locatorType,
+        coordFormat: _coordFormat,
         gpsOnLock: _gpsOnLock,
         pocketLockEnabled: _pocketLockEnabled,
+        holdTarget: _holdTarget,
+        clearProgress: _clearProgress,
         position: pos,
         heading: _heading,
         headingColor: _headingColor,
@@ -209,28 +210,6 @@ class _HomeScreenState extends State<HomeScreen>
         gpsClockOffset: _gpsClockOffset,
         gpsStaleSeconds: _gpsStaleSeconds,
       );
-
-  // ── Night palette target: 4 levels of dim red, no other colours ─────────────
-  //   Primary   0xFFCC3333  — main data (heading degrees, coordinates)
-  //   Secondary 0xFF882222  — supporting (speed, city name, bearing, MOB name)
-  //   Tertiary  0xFF661111  — labels (source, TRK, alt/acc, hints)
-  //   Ghost     0xFF441111  — barely-there (dividers, secondary arrow, borders)
-
-  // Text hierarchy (coords-only colours now live in CoordsSection)
-  Color get _cText2 => _pal.textSecondary;
-  Color get _cText3 => _pal.pick(kDFg2, kN3);
-  Color get _cSpeed => _pal.textTertiary;
-  // GPS-lock toggle indicator
-  Color get _cSaveLock => _pal.pick(kDAmb, kN3);
-  Color get _cLiveLock => _pal.port;
-  // Active waypoint / MOB card — red emergency family
-  Color get _cWptName   => _pal.pick(kDEmg, kN1);
-  Color get _cWptArrow  => _pal.pick(kDEmg, kN1);
-  Color get _cWptData   => _pal.pick(kDEmg, kN2);
-  Color get _cWptCoords => _pal.pick(kDEmgS, kN2);
-  // MOB button
-  Color get _cMobBg   => _pal.pick(kDEmgBg, kN3);
-  Color get _cMobText => _pal.textPrimary;
 
   void _toggleDayMode() {
     HapticFeedback.mediumImpact();
@@ -350,8 +329,11 @@ class _HomeScreenState extends State<HomeScreen>
       toggleGpsLock: _toggleGpsLock,
       togglePocketLock: _togglePocketLock,
       openWaypoints: _openWaypoints,
+      addMob: _addWaypoint,
       copy: _copyToClipboard,
       showCityDetails: _showCityDetails,
+      startClear: _startClear,
+      cancelClear: _cancelClear,
     );
     _sensors = SensorLifecycle(
       onPosition: _onPositionUpdate,
@@ -655,10 +637,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // Which waypoint card the hold gesture is currently targeting.
-  _WptHoldTarget? _holdTarget;
+  WptHoldTarget? _holdTarget;
 
-  void _startClear([_WptHoldTarget target = _WptHoldTarget.emergency]) {
-    final hasItem = target == _WptHoldTarget.emergency
+  void _startClear([WptHoldTarget target = WptHoldTarget.emergency]) {
+    final hasItem = target == WptHoldTarget.emergency
         ? WaypointService.instance.emergency != null
         : WaypointService.instance.active != null;
     if (!hasItem) return;
@@ -693,7 +675,7 @@ class _HomeScreenState extends State<HomeScreen>
     _holdTicker.stop();
     setState(() => _clearProgress = 0.0);
     HapticFeedback.heavyImpact();
-    if (_holdTarget == _WptHoldTarget.nav) {
+    if (_holdTarget == WptHoldTarget.nav) {
       WaypointService.instance.deactivate();
       if (mounted) setState(() {});
     } else {
@@ -1276,7 +1258,7 @@ class _HomeScreenState extends State<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _headingSection(pos),
+          HeadingSection(vm: vm, actions: _actions, landscape: false),
           _divider(),
           CoordsSection(vm: vm, actions: _actions, landscape: false),
           _divider(),
@@ -1286,51 +1268,21 @@ class _HomeScreenState extends State<HomeScreen>
                   ? CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.compact)
                   : CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.portrait),
             if (anchoring) ...[
-              _navWptCompact(pos),
+              NavWaypointCompact(vm: vm, actions: _actions),
               const SizedBox(height: 4),
               AnchorCard(dayMode: _dayMode, portrait: true, heading: _heading),
             ] else if (nav != null) ...[
               const SizedBox(height: 8),
-              _navWptCard(pos, nav, portrait: true),
+              NavWaypointCard(vm: vm, actions: _actions, landscape: false),
             ],
           ]),
           const SizedBox(height: 8),
-          _mobSection(pos: pos, portrait: true),
+          MobSection(vm: vm, actions: _actions, portrait: true),
         ],
       ),
     );
   }
 
-  // Compact one-liner for nav waypoint bearing when anchoring.
-  // Shows arrow + name + bearing + distance in a single tight row.
-  Widget _navWptCompact(Position pos) {
-    final nav = WaypointService.instance.active;
-    if (nav == null) return const SizedBox.shrink();
-    final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
-    final d = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
-    final navColor = _pal.nav;
-    return GestureDetector(
-      onLongPress: () => _openWaypoints(),
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(children: [
-          _arrowWithRelRing(b, navColor, 22),
-          const SizedBox(width: 6),
-          Expanded(child: Text(nav.name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: navColor, fontWeight: FontWeight.w600))),
-          Text('${b.round()}°',
-              style: TextStyle(fontSize: 12, color: navColor.withValues(alpha: 0.7),
-                  fontFeatures: const [FontFeature.tabularFigures()])),
-          const SizedBox(width: 6),
-          Text(formatDistanceUnit(d, _speedUnit),
-              style: TextStyle(fontSize: 12, color: navColor,
-                  fontFeatures: const [FontFeature.tabularFigures()])),
-        ]),
-      ),
-    );
-  }
 
 
 
@@ -1366,7 +1318,7 @@ class _HomeScreenState extends State<HomeScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                _headingSectionLandscape(pos),
+                HeadingSection(vm: vm, actions: _actions, landscape: true),
                 _dividerCompact(),
                 CoordsSection(vm: vm, actions: _actions, landscape: true),
               ],
@@ -1395,15 +1347,15 @@ class _HomeScreenState extends State<HomeScreen>
                       _dividerCompact(),
                     ],
                     if (!AnchorService.instance.isActive)
-                      _navWptSectionLandscape(pos),
+                      NavWaypointCard(vm: vm, actions: _actions, landscape: true),
                     if (AnchorService.instance.isActive) ...[
-                      _navWptCompact(pos),
+                      NavWaypointCompact(vm: vm, actions: _actions),
                       const SizedBox(height: 4),
                       AnchorCard(dayMode: _dayMode, portrait: false, heading: _heading),
                       const SizedBox(height: 4),
                     ],
                   ]),
-                  _mobSection(pos: pos, portrait: false),
+                  MobSection(vm: vm, actions: _actions, portrait: false),
                 ],
               ),
             ),
@@ -1423,19 +1375,6 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _dividerCompact() => Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Divider(color: _cDivider, height: 1),
-      );
-
-  // ── Arrow with relative-bearing ring ─────────────────────────────────────
-  // Wraps ArrowWidget with a thin ring whose dot shows WHERE the POI is
-  // relative to the current heading (12 o'clock = ahead, 3 = right, …).
-  // Bearing arrow + relative-direction ring for a POI (see RelBearingArrow).
-  Widget _arrowWithRelRing(double bearingDeg, Color color, double size) =>
-      RelBearingArrow(
-        bearingDeg: bearingDeg,
-        heading: _heading,
-        color: color,
-        size: size,
-        dayMode: _dayMode,
       );
 
   // ── Bearing-ring markers ──────────────────────────────────────────────────
@@ -1478,261 +1417,6 @@ class _HomeScreenState extends State<HomeScreen>
     return result;
   }
 
-  // ── Heading ───────────────────────────────────────────────────────────────
-  Widget _headingSection(Position pos) {
-    final color    = _headingColor;
-    final primary  = _heading;
-    final headingText = _intendedSourceHasData ? '${primary.round()}°' : '---';
-    final markers  = _bearingMarkers(pos);
-    final windRose = _headingArrowMode == HeadingArrowMode.windRose;
-    return Row(children: [
-      GestureDetector(
-        onLongPress: _toggleHeadingArrowMode,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
-          width: 80,
-          height: 80,
-          child: Stack(alignment: Alignment.center, children: [
-            // Wind-rose: live ring via ValueListenableBuilder so secondary dash
-            // repaints at compass rate even when GPS is the primary source.
-            // Arrow mode: static ring (headed by GPS setState).
-            if (windRose)
-              ValueListenableBuilder<double>(
-                valueListenable: _compassNotifier,
-                builder: (_, compassBearing, __) {
-                  final sec = _headingSourceMode == HeadingSourceMode.auto
-                      ? compassBearing
-                      : (_track.bearing ?? _lastValidGpsHeading);
-                  return Positioned.fill(child: CustomPaint(
-                    painter: BearingRingPainter(
-                      primaryHeading: primary, markers: markers, dayMode: _dayMode,
-                      windRoseMode: true, secondaryBearing: sec,
-                      secondaryColor: _secondaryHeadingColor,
-                    ),
-                  ));
-                },
-              )
-            else
-              Positioned.fill(child: CustomPaint(
-                painter: BearingRingPainter(
-                  primaryHeading: primary, markers: markers, dayMode: _dayMode),
-              )),
-            // Arrow mode only — both arrows. Wind-rose shows no arrows.
-            if (!windRose) ...[
-              ValueListenableBuilder<double>(
-                valueListenable: _compassNotifier,
-                builder: (_, compassBearing, __) {
-                  final sb = _headingSourceMode == HeadingSourceMode.auto
-                      ? compassBearing
-                      : (_track.bearing ?? _lastValidGpsHeading);
-                  if (sb == null) return const SizedBox.shrink();
-                  // Always dim the secondary arrow regardless of mode so it's
-                  // clearly distinguishable from the primary in night mode.
-                  return Opacity(opacity: 0.38,
-                      child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80));
-                },
-              ),
-              ArrowWidget(bearingDeg: primary, color: color, size: 80),
-            ],
-          ]),
-        ),
-      ),
-      const SizedBox(width: 20),
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        GestureDetector(
-          onLongPress: _toggleHeadingSourceMode,
-          behavior: HitTestBehavior.opaque,
-          child: Text(headingText,
-              style: TextStyle(
-                  fontSize: 64,
-                  fontWeight: FontWeight.w900,
-                  color: color,
-                  height: 1.0)),
-        ),
-        GestureDetector(
-          onLongPress: _cycleSpeedUnit,
-          child: Text(
-            formatSpeed(pos.speed, _speedUnit),
-            style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w600,
-                color: _cSpeed,
-                fontFeatures: const [FontFeature.tabularFigures()]),
-          ),
-        ),
-        _lockModeWidget(sourceFontSize: 14, trkFontSize: 14),
-      ]),
-    ]);
-  }
-
-  // Landscape heading: mirrors the portrait layout (arrow left, text right) so
-  // both orientations feel consistent. A fixed-width SizedBox on the degrees
-  // text prevents the whole section from shifting when digit count changes
-  // (e.g. "9°" → "10°" → "359°"). TRK is always rendered so the row height
-  // is stable regardless of whether a bearing is available.
-  Widget _headingSectionLandscape(Position pos) {
-    final color    = _headingColor;
-    final primary  = _heading;
-    final headingText = _intendedSourceHasData ? '${primary.round()}°' : '---';
-    final markers  = _bearingMarkers(pos);
-    final windRose = _headingArrowMode == HeadingArrowMode.windRose;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        GestureDetector(
-          onLongPress: _toggleHeadingArrowMode,
-          behavior: HitTestBehavior.opaque,
-          child: SizedBox(
-            width: 80,
-            height: 80,
-            child: Stack(alignment: Alignment.center, children: [
-              if (windRose)
-                ValueListenableBuilder<double>(
-                  valueListenable: _compassNotifier,
-                  builder: (_, compassBearing, __) {
-                    final sec = _headingSourceMode == HeadingSourceMode.auto
-                        ? compassBearing
-                        : (_track.bearing ?? _lastValidGpsHeading);
-                    return Positioned.fill(child: CustomPaint(
-                      painter: BearingRingPainter(
-                        primaryHeading: primary, markers: markers, dayMode: _dayMode,
-                        windRoseMode: true, secondaryBearing: sec,
-                        secondaryColor: _secondaryHeadingColor,
-                      ),
-                    ));
-                  },
-                )
-              else
-                Positioned.fill(child: CustomPaint(
-                  painter: BearingRingPainter(
-                    primaryHeading: primary, markers: markers, dayMode: _dayMode),
-                )),
-              if (!windRose) ...[
-                ValueListenableBuilder<double>(
-                  valueListenable: _compassNotifier,
-                  builder: (_, compassBearing, __) {
-                    final sb = _headingSourceMode == HeadingSourceMode.auto
-                        ? compassBearing
-                        : (_track.bearing ?? _lastValidGpsHeading);
-                    if (sb == null) return const SizedBox.shrink();
-                    return Opacity(opacity: 0.38,
-                        child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80));
-                  },
-                ),
-                ArrowWidget(bearingDeg: primary, color: color, size: 80),
-              ],
-            ]),
-          ),
-        ),
-        const SizedBox(width: 14),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GestureDetector(
-              onLongPress: _toggleHeadingSourceMode,
-              behavior: HitTestBehavior.opaque,
-              child: SizedBox(
-                width: 120,
-                child: Text(headingText,
-                    textAlign: TextAlign.start,
-                    style: TextStyle(
-                        fontSize: 52,
-                        fontWeight: FontWeight.w900,
-                        color: color,
-                        height: 1.0)),
-              ),
-            ),
-            GestureDetector(
-              onLongPress: _cycleSpeedUnit,
-              child: Text(
-                formatSpeed(pos.speed, _speedUnit),
-                style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: _cSpeed,
-                    fontFeatures: const [FontFeature.tabularFigures()]),
-              ),
-            ),
-            _lockModeWidget(sourceFontSize: 12, trkFontSize: 12),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // ── GPS lock mode indicator ───────────────────────────────────────────────
-  // Shows the current heading source (GPS/MAG) and the GPS-during-lock mode.
-  // Long-press either badge to toggle it (same UX as pocket-lock).
-  Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
-    final modeColor = _gpsOnLock ? _cLiveLock : _cSaveLock;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Row 1: GPS toggle + pocket-lock toggle (same line).
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          // GPS @ lock — long-press to toggle, matches pocket-lock UX.
-          GestureDetector(
-            onLongPress: _toggleGpsLock,
-            behavior: HitTestBehavior.opaque,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(_sourceLabel,
-                  style: TextStyle(
-                      fontSize: sourceFontSize,
-                      color: _cText2,
-                      letterSpacing: 2.5)),
-              const SizedBox(width: 6),
-              Icon(_gpsOnLock ? Icons.gps_fixed : Icons.gps_off,
-                  size: sourceFontSize - 1, color: modeColor),
-              Text('@',
-                  style: TextStyle(
-                      fontSize: sourceFontSize - 2,
-                      color: modeColor,
-                      height: 1.0)),
-              Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
-            ]),
-          ),
-          // Pocket-lock toggle
-          const SizedBox(width: 8),
-          GestureDetector(
-            onLongPress: _togglePocketLock,
-            behavior: HitTestBehavior.opaque,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.smartphone,
-                  size: sourceFontSize,
-                  color: _pocketLockEnabled ? _cLiveLock : _cText3),
-              Icon(
-                _pocketLockEnabled ? Icons.lock : Icons.lock_open,
-                size: sourceFontSize - 1,
-                color: _pocketLockEnabled ? _cLiveLock : _cText3,
-              ),
-              Text('@',
-                  style: TextStyle(
-                      fontSize: sourceFontSize - 2,
-                      color: _pocketLockEnabled ? _cLiveLock : _cText3,
-                      height: 1.0)),
-              Icon(Icons.sensors,
-                  size: sourceFontSize - 1,
-                  color: _pocketLockEnabled ? _cLiveLock : _cText3),
-            ]),
-          ),
-        ]),
-        // Row 2: TRK bearing.
-        Text(
-          _track.bearing != null
-              ? 'TRK ${_track.bearing!.round()}°'
-              : 'TRK ---',
-          style: TextStyle(
-              fontSize: trkFontSize,
-              color: _cText3,
-              letterSpacing: 1.5),
-        ),
-      ],
-    );
-  }
-
   void _openDebug() {
     HapticFeedback.mediumImpact();
     Navigator.of(context).push(MaterialPageRoute(
@@ -1769,205 +1453,4 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Active waypoint (MOB) ─────────────────────────────────────────────────
-  // ── Navigation waypoint (selected from list, amber) ──────────────────────
-  Widget _navWptCard(Position pos, Waypoint wp, {required bool portrait}) {
-    final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final navColor = _pal.nav;
-    final navSub   = _pal.navLabel;
-    final arrowSz  = portrait ? 50.0 : 36.0;
-    final dataFz   = portrait ? 22.0 : 16.0;
-    // Same hold-to-deactivate animation as MOB, targeting _WptHoldTarget.nav.
-    return Padding(
-      padding: const EdgeInsets.all(3),
-      child: Listener(
-        onPointerDown: (_) => _startClear(_WptHoldTarget.nav),
-        onPointerUp: (_) => _cancelClear(),
-        onPointerCancel: (_) => _cancelClear(),
-        child: CustomPaint(
-          painter: WptBorderPainter(_holdTarget == _WptHoldTarget.nav ? _clearProgress : 0.0,
-              dayMode: _dayMode),
-          child: Padding(
-            padding: portrait
-                ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
-                : const EdgeInsets.fromLTRB(10, 5, 10, 5),
-            child: Row(children: [
-              _arrowWithRelRing(b, navColor, arrowSz),
-              const SizedBox(width: 10),
-              Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(wp.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 14, color: navSub, letterSpacing: 1.2)),
-                  Row(children: [
-                    Text('${b.round()}°',
-                        style: TextStyle(fontSize: dataFz, color: navSub,
-                            fontFeatures: const [FontFeature.tabularFigures()])),
-                    const SizedBox(width: 12),
-                    Text(formatDistanceUnit(d, _speedUnit),
-                        style: TextStyle(fontSize: dataFz, color: navColor,
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: const [FontFeature.tabularFigures()])),
-                  ]),
-                ],
-              )),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Nav waypoint only — used in the scrollable top portion of the landscape column.
-  Widget _navWptSectionLandscape(Position pos) {
-    final nav = WaypointService.instance.active;
-    if (nav == null) return const SizedBox.shrink();
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      _navWptCard(pos, nav, portrait: false),
-      const SizedBox(height: 4),
-    ]);
-  }
-
-  // MOB card (when active) or MOB button — always pinned to the bottom in both
-  // orientations.  Sized down slightly in landscape.
-  Widget _mobSection({required Position pos, required bool portrait}) {
-    final mob = WaypointService.instance.emergency;
-    if (mob != null) return _wptCard(pos, mob, portrait: portrait);
-    return SizedBox(
-      width: double.infinity,
-      height: portrait ? 80 : 62,
-      child: ElevatedButton(
-        onPressed: _addWaypoint,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _cMobBg, foregroundColor: _cMobText,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-          elevation: 0,
-        ),
-        child: Text('MOB',
-            style: TextStyle(
-                fontSize: portrait ? 38 : 30,
-                fontWeight: FontWeight.w900,
-                letterSpacing: portrait ? 5 : 4)),
-      ),
-    );
-  }
-
-  Widget _wptCard(Position pos, Waypoint wp, {required bool portrait}) {
-    final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final arrowSize = portrait ? 60.0 : 46.0;
-    final nameFontSize = portrait ? 20.0 : 14.0;
-    final dataFontSize = portrait ? 22.0 : 17.0;
-    final coordFontSize = portrait ? 14.0 : 11.0;
-    final padding = portrait
-        ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
-        : const EdgeInsets.fromLTRB(10, 5, 10, 5);
-
-    // Outer Padding ensures the border ring is never clipped by parent bounds.
-    return Padding(
-      padding: EdgeInsets.all(portrait ? 3 : 2),
-      child: Listener(
-      onPointerDown: (_) => _startClear(),
-      onPointerUp: (_) => _cancelClear(),
-      onPointerCancel: (_) => _cancelClear(),
-      child: CustomPaint(
-        painter: WptBorderPainter(
-            _holdTarget == _WptHoldTarget.emergency ? _clearProgress : 0.0,
-            dayMode: _dayMode),
-        child: Padding(
-          padding: padding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Bearing row ─────────────────────────────────────────────
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _arrowWithRelRing(b, _cWptArrow, arrowSize),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerLeft,
-                          child: Text(wp.name,
-                              style: TextStyle(
-                                  fontSize: nameFontSize,
-                                  fontWeight: FontWeight.w900,
-                                  color: _cWptName,
-                                  letterSpacing: 1.5)),
-                        ),
-                        Row(children: [
-                          Text('${b.round()}°',
-                              style: TextStyle(
-                                  fontSize: dataFontSize,
-                                  color: _cWptData,
-                                  fontFeatures: const [FontFeature.tabularFigures()])),
-                          const SizedBox(width: 14),
-                          Text(formatDistanceUnit(d, _speedUnit),
-                              style: TextStyle(
-                                  fontSize: dataFontSize,
-                                  color: _cWptName,
-                                  fontWeight: FontWeight.w600,
-                                  fontFeatures: const [FontFeature.tabularFigures()])),
-                        ]),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: portrait ? 6 : 2),
-              // ── [lat | date], [lon | time], [locator | elapsed] ─────────
-              // All three rows share the same color palette so the right
-              // column reads as part of the card rather than secondary info.
-              _wptDataRow(
-                left: formatLatF(wp.lat, _coordFormat),
-                right: formatDateYmd(wp.timestamp, utc: _timeUtc),
-                fontSize: coordFontSize,
-              ),
-              _wptDataRow(
-                left: formatLonF(wp.lon, _coordFormat),
-                right: '${formatTimeHms(wp.timestamp, utc: _timeUtc)} ${_timeUtc ? 'UTC' : 'LCL'}',
-                fontSize: coordFontSize,
-              ),
-              const SizedBox(height: 2),
-              _wptDataRow(
-                left: _locStr(wp.lat, wp.lon),
-                right: formatElapsed(DateTime.now().difference(wp.timestamp)),
-                fontSize: coordFontSize,
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-    );
-  }
-
-  // Single row in the waypoint data section: left-aligned label, right-aligned
-  // value, both the same font size and the same dim-red card colour.
-  Widget _wptDataRow({
-    required String left,
-    required String right,
-    required double fontSize,
-  }) {
-    final style = TextStyle(
-      fontSize: fontSize,
-      color: _cWptCoords,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      crossAxisAlignment: CrossAxisAlignment.baseline,
-      textBaseline: TextBaseline.alphabetic,
-      children: [
-        Text(left, style: style),
-        Text(right, style: style),
-      ],
-    );
-  }
 }
