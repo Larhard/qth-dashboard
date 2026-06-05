@@ -742,11 +742,14 @@ time, never a big-bang):
    `formatting_test.dart`). (Note: `_bearingMarkers` is view-model assembly that
    mixes services + `Palette`, not pure geometry — its math already lives in the
    tested `geo_utils.bearing`, so it stays in the widget.)
-2. **Move self-contained classes to their own files — DONE (first pass).** The four
-   `CustomPainter`s → `widgets/compass_painters.dart` (now public); the city/port
-   detail bottom sheet → `widgets/city_detail_sheet.dart` (`CityDetailSheet`). These
-   were already self-contained (all data via constructor), so the move was mechanical
-   and behaviour-preserving. `home_screen.dart` shrank from ~3360 to ~2450 lines.
+2. **Move self-contained classes/widgets to their own files — DONE (first pass).**
+   The four `CustomPainter`s → `widgets/compass_painters.dart` (now public); the
+   city/port detail bottom sheet → `widgets/city_detail_sheet.dart`
+   (`CityDetailSheet`); the full-screen alarm splash → `widgets/anchor_alarm_overlay.dart`
+   (`AnchorAlarmOverlay`, parameterised by the two animation controllers + `dayMode`).
+   Each took its data via constructor (or the global `AnchorService`), so the moves
+   were mechanical and behaviour-preserving. `home_screen.dart` shrank ~3360 → ~2350
+   lines.
 3. **Next:** extract the GPS/compass/anchor lifecycle into a small controller object
    the widget observes, separating sensor state from layout. (Higher risk — touches
    live state + the screen-on/off battery handling; do it behind on-device checks.)

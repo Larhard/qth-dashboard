@@ -23,6 +23,7 @@ import '../services/overlay_service.dart';
 import '../widgets/arrow_widget.dart';
 import '../widgets/compass_painters.dart';
 import '../widgets/city_detail_sheet.dart';
+import '../widgets/anchor_alarm_overlay.dart';
 import 'debug_screen.dart';
 import 'waypoints_screen.dart';
 
@@ -1116,112 +1117,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Full-screen alarm strobe overlay ─────────────────────────────────────
-  Widget _buildAlarmOverlay() {
-    return AnimatedBuilder(
-      animation: _strobeCtrl,
-      builder: (_, __) {
-        final bright = _strobeCtrl.value > 0.5;
-        final bg = bright
-            ? (_pal.pick(Colors.white, Colors.black))
-            : _pal.pick(kDEmg.withValues(alpha: 0.9), kN0);
-        return Positioned.fill(
-          child: Container(
-            color: bg,
-            child: SafeArea(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.anchor, size: 72, color: bright
-                      ? (_pal.emergency)
-                      : (_pal.pick(Colors.white, Colors.black))),
-                  const SizedBox(height: 16),
-                  Text('ANCHOR ALARM',
-                      style: TextStyle(
-                        fontSize: 32, fontWeight: FontWeight.w900,
-                        color: bright
-                            ? (_pal.emergency)
-                            : (_pal.pick(Colors.white, Colors.black)),
-                        letterSpacing: 4,
-                      )),
-                  const SizedBox(height: 8),
-                  Text(
-                    AnchorService.instance.gpsLost
-                        ? 'GPS signal lost ${AnchorService.instance.gpsLossSeconds}s'
-                        : 'Outside anchor radius!\n'
-                          '${AnchorService.instance.distanceM?.round() ?? 0} m '
-                          'from anchor point',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: bright
-                          ? (_pal.emergency)
-                          : (_pal.pick(Colors.white, Colors.black)),
-                    ),
-                  ),
-                  const SizedBox(height: 48),
-                  // Mute — must HOLD for 3 s (a tap won't dismiss it).
-                  _muteHoldButton(bright),
-                  const SizedBox(height: 16),
-                  // SAFETY: lifting the anchor is only available from the
-                  // Waypoints screen.  This screen only allows muting.
-                  Text('Open Waypoints screen to lift anchor.',
-                      style: TextStyle(fontSize: 12,
-                          color: bright
-                              ? _pal.pick(kDEmg.withValues(alpha: 0.55), kN3)
-                              : (_pal.pick(Colors.white38, kN4)))),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// Hold-to-mute control with a MOB-style progress bar.  A tap does nothing;
-  /// the alarm is muted only after a continuous 3-second hold.
-  Widget _muteHoldButton(bool bright) {
-    final fg = bright
-        ? (_pal.emergency)
-        : (_pal.pick(Colors.white, Colors.black));
-    return Listener(
-      onPointerDown: (_) => _muteCtrl.forward(from: _muteCtrl.value),
-      onPointerUp: (_) => _muteCtrl.reverse(),
-      onPointerCancel: (_) => _muteCtrl.reverse(),
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedBuilder(
-        animation: _muteCtrl,
-        builder: (_, __) => Container(
-          width: 240,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          decoration: BoxDecoration(
-            border: Border.all(color: fg, width: 2),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_muteCtrl.value > 0 ? 'KEEP HOLDING…' : 'HOLD 3s TO MUTE',
-                  style: TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 2, color: fg)),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: _muteCtrl.value,
-                  minHeight: 6,
-                  backgroundColor: fg.withValues(alpha: 0.20),
-                  valueColor: AlwaysStoppedAnimation<Color>(fg),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   static String _gpxImportSummary(
       ({int added, int skipped, int renamed}) r, int total) {
     final parts = <String>[];
@@ -1320,7 +1215,8 @@ class _HomeScreenState extends State<HomeScreen>
             // Anchor alarm overlay — shown on top of everything when alarm is active.
             if (AnchorService.instance.level == AnchorAlarmLevel.alarm &&
                 !AnchorService.instance.isMuted)
-              _buildAlarmOverlay(),
+              AnchorAlarmOverlay(
+                dayMode: _dayMode, strobe: _strobeCtrl, muteController: _muteCtrl),
             // Waypoints — 48 × 48 hit area, icon visually at top-right corner.
             Positioned(
               top: 0,
