@@ -22,6 +22,7 @@ import '../services/anchor_service.dart';
 import '../services/overlay_service.dart';
 import '../widgets/arrow_widget.dart';
 import '../widgets/compass_painters.dart';
+import '../widgets/rel_bearing_arrow.dart';
 import '../widgets/city_detail_sheet.dart';
 import '../widgets/anchor_alarm_overlay.dart';
 import 'debug_screen.dart';
@@ -544,17 +545,14 @@ class _HomeScreenState extends State<HomeScreen>
   //     (It is fine for navigation to look "stale"/lost when stationary — the user
   //      is aware the vehicle isn't moving; power is the priority here.)
   AndroidSettings _locationSettings({ForegroundNotificationConfig? fg}) {
-    final anchoring = AnchorService.instance.isActive;
+    final p = GpsTuning.profile(
+      anchoring: AnchorService.instance.isActive,
+      charging: _charging,
+    );
     return AndroidSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: anchoring
-          ? GpsTuning.anchorDistanceFilterM
-          : (_charging
-              ? GpsTuning.navDistanceFilterChargingM
-              : GpsTuning.navDistanceFilterBatteryM),
-      intervalDuration: anchoring
-          ? GpsTuning.anchorInterval
-          : (_charging ? GpsTuning.navIntervalCharging : GpsTuning.navIntervalBattery),
+      distanceFilter: p.distanceFilterM,
+      intervalDuration: p.interval,
       foregroundNotificationConfig: fg,
     );
   }
@@ -1524,25 +1522,15 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Arrow with relative-bearing ring ─────────────────────────────────────
   // Wraps ArrowWidget with a thin ring whose dot shows WHERE the POI is
   // relative to the current heading (12 o'clock = ahead, 3 = right, …).
-  Widget _arrowWithRelRing(double bearingDeg, Color color, double size) {
-    final relBearing = (bearingDeg - _heading + 360) % 360;
-    return SizedBox(
-      width: size, height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned.fill(child: CustomPaint(
-            painter: RelativeDotRingPainter(
-              relBearing: relBearing,
-              color: color,
-              dayMode: _dayMode,
-            ),
-          )),
-          ArrowWidget(bearingDeg: bearingDeg, color: color, size: size),
-        ],
-      ),
-    );
-  }
+  // Bearing arrow + relative-direction ring for a POI (see RelBearingArrow).
+  Widget _arrowWithRelRing(double bearingDeg, Color color, double size) =>
+      RelBearingArrow(
+        bearingDeg: bearingDeg,
+        heading: _heading,
+        color: color,
+        size: size,
+        dayMode: _dayMode,
+      );
 
   // ── Bearing-ring markers ──────────────────────────────────────────────────
   // Returns the city and/or active-waypoint bearing as coloured dots that will

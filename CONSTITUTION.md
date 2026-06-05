@@ -748,8 +748,16 @@ time, never a big-bang):
    (`CityDetailSheet`); the full-screen alarm splash → `widgets/anchor_alarm_overlay.dart`
    (`AnchorAlarmOverlay`, parameterised by the two animation controllers + `dayMode`).
    Each took its data via constructor (or the global `AnchorService`), so the moves
-   were mechanical and behaviour-preserving. `home_screen.dart` shrank ~3360 → ~2350
-   lines.
+   were mechanical and behaviour-preserving. Also extracted the reusable
+   `RelBearingArrow` (arrow + relative-direction ring, used by 4 cards) to
+   `widgets/rel_bearing_arrow.dart`, and the GPS-cadence selection to a pure tested
+   `GpsTuning.profile()` (`gps_profile_test.dart`). `home_screen.dart` shrank ~3360 →
+   ~2340 lines; the suite is now 98 tests.
+
+   **Guiding line for what's safe to extract now:** presentational widgets and pure
+   functions whose correctness is verifiable by a quick feature check. The lifecycle
+   pieces below are deferred precisely because their regressions surface only over a
+   long run / real driving, which is expensive to verify.
 3. **Next:** extract the GPS/compass/anchor lifecycle into a small controller object
    the widget observes, separating sensor state from layout. (Higher risk — touches
    live state + the screen-on/off battery handling; do it behind on-device checks.)

@@ -38,6 +38,23 @@ abstract final class GpsTuning {
   /// Re-check the charger state every N stale-ticks (the timer runs at 1 Hz, so
   /// this is also N seconds) to adapt the navigation power profile mid-session.
   static const int chargerRecheckTicks = 30;
+
+  /// The GPS distance filter + update interval for the current mode.
+  ///   • Anchoring → full robustness (distanceFilter 0, short interval), never
+  ///     charger-dependent, so a stationary boat keeps delivering fixes.
+  ///   • Navigating → power-aware: economical off-charger, responsive when charging.
+  /// Pure selection logic, unit-tested in `gps_profile_test.dart`.
+  static ({int distanceFilterM, Duration interval}) profile({
+    required bool anchoring,
+    required bool charging,
+  }) {
+    if (anchoring) {
+      return (distanceFilterM: anchorDistanceFilterM, interval: anchorInterval);
+    }
+    return charging
+        ? (distanceFilterM: navDistanceFilterChargingM, interval: navIntervalCharging)
+        : (distanceFilterM: navDistanceFilterBatteryM, interval: navIntervalBattery);
+  }
 }
 
 /// Display / interaction thresholds that trade responsiveness against battery.
