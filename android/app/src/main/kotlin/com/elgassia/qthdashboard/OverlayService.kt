@@ -8,10 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -23,7 +19,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * Hosts the floating compass overlay ([OverlayView]) in a system window so it
@@ -31,20 +26,22 @@ import kotlin.math.roundToInt
  * alive while the user is in another app.  Only ever started when the user
  * explicitly enables the overlay.
  *
- * Data source:
- *   • While the Flutter app is alive it pushes rich frames via [update]
- *     (declination-corrected heading, wind-rose mode, city, all POI dots).
- *   • When the app is CLOSED/killed those pushes stop — so the service falls back
- *     to its OWN compass sensor (and live [AnchorController] state) to keep the
- *     overlay updating instead of freezing.
+ * Data source: ONLY the foreground Flutter app, via [update]. It alone knows the
+ * heading-source rules (GPS/TRK/MAG, auto vs explicit) and the live nav data, so it
+ * is the single authority for what the overlay shows. There is deliberately NO
+ * native compass fallback — a sensor-driven fallback would show a raw MAG heading
+ * that ignores those rules and freeze stale POI data. Instead, a watchdog closes
+ * the overlay when the app stops pushing (e.g. swiped away): better gone than stale.
  */
-class OverlayService : Service(), SensorEventListener {
+class OverlayService : Service() {
 
     companion object {
         const val ACTION_SHOW = "com.elgassia.qthdashboard.OVERLAY_SHOW"
         const val ACTION_HIDE = "com.elgassia.qthdashboard.OVERLAY_HIDE"
         const val NOTIF_ID    = 3001
         const val CHANNEL_ID  = "overlay_monitor"
+        // No frame from the app for this long → assume it's gone; close the overlay.
+        const val WATCHDOG_MS = 3000L
 
         // Live instance so MainActivity's channel can push data without binding.
         @Volatile var instance: OverlayService? = null
@@ -55,26 +52,23 @@ class OverlayService : Service(), SensorEventListener {
     private var view: OverlayView? = null
     private lateinit var params: WindowManager.LayoutParams
 
-    // Native compass fallback (used when Flutter stops pushing — e.g. the app was
-    // swiped away). Driven by a periodic ticker, not just sensor events, so the
-    // overlay never freezes even if sensor delivery is sparse/batched.
-    private var sensorManager: SensorManager? = null
-    private var rotationSensor: Sensor? = null
+    // Watchdog: the overlay is driven only by the foreground app. If no frame
+    // arrives for WATCHDOG_MS (the app was swiped away / killed), close the overlay
+    // rather than leave it frozen on stale data.
     @Volatile private var lastFlutterUpdate = 0L
-    @Volatile private var latestHeading = 0f
-    @Volatile private var haveHeading = false
-    private val rotMatrix = FloatArray(9)
-    private val orientation = FloatArray(3)
+    private var startedAt = 0L
     private val handler = Handler(Looper.getMainLooper())
-    private val fallbackTick = object : Runnable {
+    private val watchdog = object : Runnable {
         override fun run() {
-            renderFallback()
-            handler.postDelayed(this, 150L) // ~6–7 Hz
+            // Reference the later of "service started" and "last frame" so we allow
+            // a brief grace for the first push after show().
+            val ref = maxOf(lastFlutterUpdate, startedAt)
+            if (SystemClock.elapsedRealtime() - ref > WATCHDOG_MS) {
+                teardown(); stopSelf(); return   // stop rescheduling
+            }
+            handler.postDelayed(this, 1000L)
         }
     }
-
-    // True while Flutter is actively pushing frames (it then drives the overlay).
-    private fun flutterAlive() = SystemClock.elapsedRealtime() - lastFlutterUpdate < 1500L
 
     override fun onCreate() {
         super.onCreate()
@@ -124,70 +118,19 @@ class OverlayService : Service(), SensorEventListener {
 
         attachDragAndTap(v)
         try { wm?.addView(v, params); view = v; instance = this } catch (_: Exception) { stopSelf() }
-        startCompass()
+        startWatchdog()
     }
 
-    // ── Native compass fallback ─────────────────────────────────────────────────
+    // ── Watchdog (close the overlay when the app stops driving it) ───────────────
 
-    private fun startCompass() {
-        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        rotationSensor?.let {
-            sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-        }
-        handler.removeCallbacks(fallbackTick)
-        handler.post(fallbackTick)
+    private fun startWatchdog() {
+        startedAt = SystemClock.elapsedRealtime()
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, 1000L)
     }
 
-    private fun stopCompass() {
-        handler.removeCallbacks(fallbackTick)
-        try { sensorManager?.unregisterListener(this) } catch (_: Exception) {}
-        sensorManager = null
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-
-    override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
-        // Record the latest heading; the ticker decides when to draw. (Storing it
-        // even while Flutter is alive means the fallback has fresh data the instant
-        // Flutter stops.)
-        SensorManager.getRotationMatrixFromVector(rotMatrix, event.values)
-        SensorManager.getOrientation(rotMatrix, orientation)
-        latestHeading = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0).toFloat()
-        haveHeading = true
-        if (!flutterAlive()) renderFallback() // immediate update when Flutter is gone
-    }
-
-    /// Drives the overlay from the device sensor + live AnchorController when Flutter
-    /// is no longer pushing. Time-driven (via [fallbackTick]) so the overlay keeps
-    /// updating even if rotation-vector events are sparse or the app was killed.
-    private fun renderFallback() {
-        if (flutterAlive()) return // Flutter is driving — leave it alone
-        val v = view ?: return
-        if (haveHeading) {
-            v.heading = latestHeading
-            v.headingValid = true
-        }
-        // Keep the last colours/mode Flutter pushed; refresh live anchor data only.
-        if (AnchorController.active) {
-            val status = when (AnchorController.state) {
-                AnchorController.State.ALARM   -> "⚓ ALARM"
-                AnchorController.State.WARNING -> "⚓ WARNING"
-                AnchorController.State.SAFE    -> "⚓ OK"
-            }
-            val detail = if (AnchorController.gpsLostSeconds > 0)
-                "GPS lost ${AnchorController.gpsLostSeconds}s"
-            else
-                "${AnchorController.distanceM.roundToInt()}/${AnchorController.radiusM.roundToInt()} m"
-            v.lineLabels = arrayOf(status)
-            v.lineValues = arrayOf(detail)
-            v.lineColors = intArrayOf(v.northColor)
-            v.markerBearings = doubleArrayOf(AnchorController.bearingDeg)
-            v.markerColors = intArrayOf(v.northColor)
-            v.markerScales = doubleArrayOf(1.45)
-        }
-        v.applyData()
+    private fun stopWatchdog() {
+        handler.removeCallbacks(watchdog)
     }
 
     private fun attachDragAndTap(v: View) {
@@ -230,7 +173,7 @@ class OverlayService : Service(), SensorEventListener {
     }
 
     private fun teardown() {
-        stopCompass()
+        stopWatchdog()
         try { view?.let { wm?.removeView(it) } } catch (_: Exception) {}
         view = null
         instance = null

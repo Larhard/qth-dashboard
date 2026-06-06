@@ -707,9 +707,18 @@ and the nearest city / anchor status stay glanceable without switching back.
   persists the user's enable intent, and pushes one data frame per update.
 
 **Rules:**
+- **The foreground Flutter app is the SINGLE source of overlay data.** There is no
+  native compass/sensor fallback: only the app knows the heading-source rules
+  (GPS/TRK/MAG, auto vs explicit) and the live nav data, so a sensor-driven fallback
+  would show a raw MAG heading that ignores those rules and freeze stale POI data.
+  Instead, `OverlayService` runs a **watchdog**: if no frame arrives for ~3 s (the
+  app was swiped away / killed) it closes the overlay. Better gone than stale/frozen.
+  (The anchor alarm is unaffected — it lives in its own service + notification, not
+  the floating overlay.)
 - **Colours are pushed as ARGB ints from Dart** — the overlay never hard-codes a
   semantic colour, so the §4 palette (incl. the pure-red night rule) stays the
-  single source of truth.
+  single source of truth. The numeric heading uses the *source* colour (GPS green /
+  TRK yellow / MAG white), matching the dashboard.
 - **Shown only in the background.** The home screen shows it on `paused` and hides
   it on `resumed` — never drawn on top of the full dashboard.
 - **Opt-in and battery-bounded.** Sensors are kept alive in the background ONLY
