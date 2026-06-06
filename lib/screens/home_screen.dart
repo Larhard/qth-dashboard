@@ -529,11 +529,26 @@ class _HomeScreenState extends State<HomeScreen>
     DeclinationService.instance.update(pos.latitude, pos.longitude, pos.altitude);
 
     if (!_screenOn || !mounted) {
-      // Screen is off (LIVE mode background stream): skip all display work.
-      // String formatting, city lookups, and setState are wasted CPU when
-      // nothing is visible. Cache the raw position for display on resume.
+      // Screen is off / app backgrounded: skip the display caches + setState that
+      // would be wasted with nothing on screen. Cache the raw position for resume.
       // NOTE: !mounted also guards against rare widget-disposal races.
       _position = pos;
+      // EXCEPTION: the floating overlay is shown only in the background, and it
+      // needs a fresh nearest-city + POI markers while driving. Recompute the city
+      // (throttled) and push a frame so the overlay isn't frozen at the position
+      // where the app was backgrounded.
+      if (mounted && OverlayController.instance.isShown) {
+        final needsCity = _lastCityCalcPos == null ||
+            Geolocator.distanceBetween(
+                  _lastCityCalcPos!.latitude, _lastCityCalcPos!.longitude,
+                  pos.latitude, pos.longitude,
+                ) >= _cityRecalcThresholdM;
+        if (needsCity) {
+          _lastCityCalcPos = pos;
+          _nearestCity = CityService.instance.nearest(pos.latitude, pos.longitude);
+        }
+        _pushOverlay();
+      }
       return;
     }
 

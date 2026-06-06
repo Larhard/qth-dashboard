@@ -13,7 +13,9 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
@@ -53,13 +55,26 @@ class OverlayService : Service(), SensorEventListener {
     private var view: OverlayView? = null
     private lateinit var params: WindowManager.LayoutParams
 
-    // Native compass fallback (used when Flutter stops pushing).
+    // Native compass fallback (used when Flutter stops pushing — e.g. the app was
+    // swiped away). Driven by a periodic ticker, not just sensor events, so the
+    // overlay never freezes even if sensor delivery is sparse/batched.
     private var sensorManager: SensorManager? = null
     private var rotationSensor: Sensor? = null
     @Volatile private var lastFlutterUpdate = 0L
-    private var lastNativeDraw = 0L
+    @Volatile private var latestHeading = 0f
+    @Volatile private var haveHeading = false
     private val rotMatrix = FloatArray(9)
     private val orientation = FloatArray(3)
+    private val handler = Handler(Looper.getMainLooper())
+    private val fallbackTick = object : Runnable {
+        override fun run() {
+            renderFallback()
+            handler.postDelayed(this, 150L) // ~6–7 Hz
+        }
+    }
+
+    // True while Flutter is actively pushing frames (it then drives the overlay).
+    private fun flutterAlive() = SystemClock.elapsedRealtime() - lastFlutterUpdate < 1500L
 
     override fun onCreate() {
         super.onCreate()
@@ -120,9 +135,12 @@ class OverlayService : Service(), SensorEventListener {
         rotationSensor?.let {
             sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
+        handler.removeCallbacks(fallbackTick)
+        handler.post(fallbackTick)
     }
 
     private fun stopCompass() {
+        handler.removeCallbacks(fallbackTick)
         try { sensorManager?.unregisterListener(this) } catch (_: Exception) {}
         sensorManager = null
     }
@@ -131,20 +149,27 @@ class OverlayService : Service(), SensorEventListener {
 
     override fun onSensorChanged(event: SensorEvent) {
         if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
-        // Only drive natively when Flutter has stopped pushing (app closed/killed).
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastFlutterUpdate < 1500L) return
-        if (now - lastNativeDraw < 150L) return   // throttle ~6–7 Hz
-        lastNativeDraw = now
-
+        // Record the latest heading; the ticker decides when to draw. (Storing it
+        // even while Flutter is alive means the fallback has fresh data the instant
+        // Flutter stops.)
         SensorManager.getRotationMatrixFromVector(rotMatrix, event.values)
         SensorManager.getOrientation(rotMatrix, orientation)
-        val heading = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0)
+        latestHeading = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0).toFloat()
+        haveHeading = true
+        if (!flutterAlive()) renderFallback() // immediate update when Flutter is gone
+    }
 
+    /// Drives the overlay from the device sensor + live AnchorController when Flutter
+    /// is no longer pushing. Time-driven (via [fallbackTick]) so the overlay keeps
+    /// updating even if rotation-vector events are sparse or the app was killed.
+    private fun renderFallback() {
+        if (flutterAlive()) return // Flutter is driving — leave it alone
         val v = view ?: return
-        v.heading = heading.toFloat()
-        v.headingValid = true
-        // Keep the last colours/mode pushed by Flutter; refresh live anchor data.
+        if (haveHeading) {
+            v.heading = latestHeading
+            v.headingValid = true
+        }
+        // Keep the last colours/mode Flutter pushed; refresh live anchor data only.
         if (AnchorController.active) {
             val status = when (AnchorController.state) {
                 AnchorController.State.ALARM   -> "⚓ ALARM"
@@ -158,7 +183,6 @@ class OverlayService : Service(), SensorEventListener {
             v.lineLabels = arrayOf(status)
             v.lineValues = arrayOf(detail)
             v.lineColors = intArrayOf(v.northColor)
-            // One dot toward the anchor.
             v.markerBearings = doubleArrayOf(AnchorController.bearingDeg)
             v.markerColors = intArrayOf(v.northColor)
             v.markerScales = doubleArrayOf(1.45)

@@ -158,7 +158,9 @@ class OverlayView(context: Context) : View(context) {
         val blockH = headingH + lineLabels.size * lineH
         var y = (h - blockH) / 2f + dp(20f)   // baseline of the heading number
 
-        text.color = textColor; text.isFakeBoldText = true; text.textSize = dp(22f)
+        // Numeric heading uses the SOURCE colour (GPS green / TRK yellow / MAG
+        // white) like the main dashboard — not the neutral text colour.
+        text.color = primaryColor; text.isFakeBoldText = true; text.textSize = dp(22f)
         text.textAlign = Paint.Align.LEFT
         canvas.drawText(if (headingValid) "${Math.round(heading)}°" else "---", tx, y, text)
 
