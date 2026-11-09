@@ -92,7 +92,13 @@ class ReferenceService {
   Future<RefTable?> load(PoiCategory c) {
     final t = _tables[c];
     if (t != null) return Future.value(t);
-    return _loading[c] ??= _load(c).whenComplete(() => _loading.remove(c));
+    // Block body on purpose: `=> _loading.remove(c)` would RETURN this very
+    // future from the whenComplete callback, which then waits on itself forever
+    // (awaiting callers such as the Nearby list hang; the dashboard didn't
+    // notice because it doesn't await the load).
+    return _loading[c] ??= _load(c).whenComplete(() {
+      _loading.remove(c);
+    });
   }
 
   Future<RefTable?> _load(PoiCategory c) async {
