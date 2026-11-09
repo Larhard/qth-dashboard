@@ -9,6 +9,8 @@ import '../utils/gpx_utils.dart';
 import '../services/anchor_service.dart';
 import '../services/overlay_service.dart';
 import 'about_screen.dart';
+import 'nearby_poi_screen.dart';
+import 'settings_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
 import '../utils/coordinate_utils.dart' show formatLatF, formatLonF, maidenhead, parseCoordValue, coordLatHint, coordLonHint;
@@ -335,6 +337,17 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           case 'import': _importGpx();
           case 'export': _exportGpx();
           case 'overlay': _toggleOverlay();
+          case 'nearby':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => NearbyPoiScreen(
+                  position: widget.currentPosition,
+                  dayMode: widget.dayMode,
+                  speedUnit: widget.speedUnit,
+                  coordFormat: widget.coordFormat,
+                  locatorType: widget.locatorType,
+                )));
+          case 'settings':
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => SettingsScreen(dayMode: widget.dayMode)));
           case 'about':
             Navigator.push(context,
                 MaterialPageRoute(builder: (_) => AboutScreen(dayMode: widget.dayMode)));
@@ -347,6 +360,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             overlayOn ? Icons.picture_in_picture_alt : Icons.picture_in_picture_alt_outlined,
             overlayOn ? 'Floating compass: ON' : 'Floating compass',
             color: overlayOn ? (_pal.port) : null),
+        item('nearby', Icons.near_me_outlined, 'Nearby POI list'),
+        item('settings', Icons.tune, 'Settings & reference data'),
         item('about', Icons.info_outline, 'About & Legal'),
       ],
     );

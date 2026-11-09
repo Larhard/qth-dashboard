@@ -4,7 +4,10 @@ import 'utils/units.dart';
 import 'package:flutter/services.dart' show SystemChrome, SystemUiMode;
 import 'package:get_storage/get_storage.dart';
 import 'screens/home_screen.dart';
+import 'config/ref_sources.dart';
 import 'services/city_service.dart';
+import 'services/poi_service.dart';
+import 'services/reference_service.dart';
 import 'services/waypoint_service.dart';
 import 'utils/app_info.dart';
 
@@ -16,6 +19,8 @@ void main() async {
   await AppInfo.load(); // version from pubspec via package metadata
   WaypointService.instance.load();
   await CityService.instance.load();
+  await ReferenceService.instance.init(); // bundled + downloaded reference lists
+  PoiService.instance.init(); // enabled categories, current cycle position
   runApp(const QthHelperApp());
 }
 
@@ -92,6 +97,20 @@ Full licence text: https://opendatacommons.org/licenses/odbl/1.0/
 Attribution guidelines: https://www.openstreetmap.org/copyright
 ''',
     );
+
+    // Amateur-radio award program reference lists (assets/refs/*.tsv and
+    // lists downloaded on demand from Settings).
+    for (final e in refSources.entries) {
+      yield LicenseEntryWithLineBreaks(
+        ['${e.key.label} reference list'],
+        '${e.value.attribution}\n\n'
+        'Source: ${e.value.partUrl ?? e.value.url}\n'
+        'Program: ${e.value.homepage}\n\n'
+        'Reference codes, names and positions are the property of the program '
+        'and are reproduced for the convenience of its participants. The '
+        "program's own lists and rules are authoritative.",
+      );
+    }
   });
 }
 

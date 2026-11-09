@@ -26,6 +26,12 @@ import '../widgets/coords_section.dart';
 import '../widgets/city_section.dart';
 import '../widgets/heading_section.dart';
 import '../widgets/waypoint_sections.dart';
+import '../widgets/reference_section.dart';
+import '../widgets/ref_detail_sheet.dart';
+import '../models/poi_category.dart';
+import '../models/poi_hit.dart';
+import '../services/poi_service.dart';
+import '../services/reference_service.dart';
 import '../widgets/city_detail_sheet.dart';
 import '../widgets/anchor_alarm_overlay.dart';
 import 'debug_screen.dart';
@@ -56,7 +62,8 @@ class _HomeScreenState extends State<HomeScreen>
   // ── GPS state ─────────────────────────────────────────────────────────────
   Position? _position;
   double? _lastValidGpsHeading;
-  NearestCity? _nearestCity;
+  // Nearest POI of the current category (city / port / ham reference).
+  PoiHit? _nearestPoi;
   Position? _lastCityCalcPos;
   String? _error;
 
@@ -199,9 +206,9 @@ class _HomeScreenState extends State<HomeScreen>
         lastValidGpsHeading: _lastValidGpsHeading,
         compassNotifier: _compassNotifier,
         markers: _bearingMarkers(pos),
-        nearestCity: _nearestCity,
-        cityColor: _cityColor,
-        citySubColor: _citySubColor,
+        nearestPoi: _nearestPoi,
+        poiColor: _poiColor,
+        poiSubColor: _poiSubColor,
         latStr: _cachedLatStr,
         lonStr: _cachedLonStr,
         locStr: _cachedLocStr,
@@ -281,19 +288,10 @@ class _HomeScreenState extends State<HomeScreen>
     return _pal.pick(kDGps, kN3);   // GPS secondary
   }
 
-  // City accent colours — each tier has a distinct hue; night collapses to red.
-  Color get _cityColor => !_dayMode ? kN2 : switch (CityService.instance.mode) {
-    CityMode.large    => kDCityL, // orange   — global overview
-    CityMode.precise  => kDCityP, // amber    — regional
-    CityMode.detailed => kDCityD, // lime     — local detail
-    CityMode.port     => kDPort,  // cyan     — port/nautical
-  };
-  Color get _citySubColor => !_dayMode ? kN3 : switch (CityService.instance.mode) {
-    CityMode.large    => kDAmbs,  // deep orange
-    CityMode.precise  => kDAmb,   // amber
-    CityMode.detailed => kDCityDS,// lime-dark
-    CityMode.port     => kDPortL, // cyan sub-text
-  };
+  // POI accent colours — one hue per category (palette.dart); night → red ramp.
+  PoiCategory get _poiCategory => _nearestPoi?.category ?? PoiService.instance.current;
+  Color get _poiColor => _pal.poi(_poiCategory);
+  Color get _poiSubColor => _pal.poiSub(_poiCategory);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
@@ -318,6 +316,7 @@ class _HomeScreenState extends State<HomeScreen>
         }
       });
     AnchorService.instance.onStateChanged = _onAnchorStateChanged;
+    ReferenceService.instance.revision.addListener(_recomputePoi);
     _actions = DashboardActions(
       toggleHeadingArrowMode: _toggleHeadingArrowMode,
       toggleHeadingSource: _toggleHeadingSourceMode,
@@ -325,13 +324,13 @@ class _HomeScreenState extends State<HomeScreen>
       toggleLocatorType: _toggleLocatorType,
       toggleTimeZone: _toggleTimeZone,
       cycleSpeedUnit: _cycleSpeedUnit,
-      toggleCityMode: _toggleCityMode,
+      cyclePoi: _cyclePoi,
       toggleGpsLock: _toggleGpsLock,
       togglePocketLock: _togglePocketLock,
       openWaypoints: _openWaypoints,
       addMob: _addWaypoint,
       copy: _copyToClipboard,
-      showCityDetails: _showCityDetails,
+      showPoiDetails: _showPoiDetails,
       startClear: _startClear,
       cancelClear: _cancelClear,
     );
@@ -358,6 +357,7 @@ class _HomeScreenState extends State<HomeScreen>
     _strobeCtrl.dispose();
     _muteCtrl.dispose();
     AnchorService.instance.onStateChanged = null;
+    ReferenceService.instance.revision.removeListener(_recomputePoi);
     _compassNotifier.dispose();
     _sensors.dispose();
     super.dispose();
@@ -545,7 +545,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ) >= _cityRecalcThresholdM;
         if (needsCity) {
           _lastCityCalcPos = pos;
-          _nearestCity = CityService.instance.nearest(pos.latitude, pos.longitude);
+          _nearestPoi = PoiService.instance.nearest(pos.latitude, pos.longitude);
         }
         _pushOverlay();
       }
@@ -568,8 +568,8 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (needsCity) {
       _lastCityCalcPos = pos;
-      final city = CityService.instance.nearest(pos.latitude, pos.longitude);
-      setState(() { _position = pos; _nearestCity = city; });
+      final poi = PoiService.instance.nearest(pos.latitude, pos.longitude);
+      setState(() { _position = pos; _nearestPoi = poi; });
     } else {
       setState(() => _position = pos);
     }
@@ -588,6 +588,10 @@ class _HomeScreenState extends State<HomeScreen>
     );
     return AndroidSettings(
       accuracy: LocationAccuracy.high,
+      // MSL (not ellipsoid) altitude: comparable with map / summit heights, which
+      // the SOTA activation-zone estimate depends on (the geoid offset is 30-50 m
+      // in Central Europe, more than the 25 m zone).
+      useMSLAltitude: true,
       distanceFilter: p.distanceFilterM,
       intervalDuration: p.interval,
       foregroundNotificationConfig: fg,
@@ -824,14 +828,26 @@ class _HomeScreenState extends State<HomeScreen>
     _showSnack(speedUnitLabel(next), duration: const Duration(milliseconds: 900));
   }
 
-  void _toggleCityMode() {
-    CityService.instance.toggleMode();
+  // Long-press on the POI section: next enabled category with data.
+  void _cyclePoi() {
+    final next = PoiService.instance.cycle();
+    HapticFeedback.selectionClick();
+    if (next == null) {
+      _showSnack('No other POI categories enabled (Waypoints > menu > Settings)');
+      return;
+    }
+    _showSnack(next.label, duration: const Duration(milliseconds: 900));
+    _recomputePoi();
+  }
+
+  // Re-query the nearest POI (category changed, or a reference table finished
+  // loading / was updated).
+  void _recomputePoi() {
     _lastCityCalcPos = null;
     final pos = _position;
-    if (pos != null) {
-      final city = CityService.instance.nearest(pos.latitude, pos.longitude);
-      setState(() => _nearestCity = city);
-    }
+    if (pos == null || !mounted) return;
+    final poi = PoiService.instance.nearest(pos.latitude, pos.longitude);
+    setState(() => _nearestPoi = poi);
   }
 
   void _copyToClipboard(String text) {
@@ -933,8 +949,8 @@ class _HomeScreenState extends State<HomeScreen>
         '${b.round()}°  ${formatDistanceUnit(distKm, _speedUnit)}';
 
     if (pos != null) {
-      final nc = _nearestCity;
-      if (nc != null) addLine(nc.city.name, bd(nc.bearingDeg, nc.distKm), _cityColor);
+      final poi = _nearestPoi;
+      if (poi != null) addLine(poi.label, bd(poi.bearingDeg, poi.distKm), _poiColor);
 
       final nav = WaypointService.instance.active;
       if (nav != null) {
@@ -1278,10 +1294,8 @@ class _HomeScreenState extends State<HomeScreen>
           CoordsSection(vm: vm, actions: _actions, landscape: false),
           _divider(),
           _adaptiveSecondary(children: [
-            if (_nearestCity != null)
-              anchoring
-                  ? CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.compact)
-                  : CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.portrait),
+            if (_nearestPoi != null)
+              _poiSection(vm, anchoring ? CityVariant.compact : CityVariant.portrait),
             if (anchoring) ...[
               NavWaypointCompact(vm: vm, actions: _actions),
               const SizedBox(height: 4),
@@ -1355,10 +1369,9 @@ class _HomeScreenState extends State<HomeScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _adaptiveSecondary(children: [
-                    if (_nearestCity != null) ...[
-                      AnchorService.instance.isActive
-                          ? CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.compact)
-                          : CitySection(nc: _nearestCity!, vm: vm, actions: _actions, variant: CityVariant.landscape),
+                    if (_nearestPoi != null) ...[
+                      _poiSection(vm, AnchorService.instance.isActive
+                          ? CityVariant.compact : CityVariant.landscape),
                       _dividerCompact(),
                     ],
                     if (!AnchorService.instance.isActive)
@@ -1401,9 +1414,9 @@ class _HomeScreenState extends State<HomeScreen>
   List<({double bearingDeg, Color color, double sizeScale})> _bearingMarkers(Position pos) {
     final result = <({double bearingDeg, Color color, double sizeScale})>[];
 
-    // City
-    if (_nearestCity != null) {
-      result.add((bearingDeg: _nearestCity!.bearingDeg, color: _cityColor, sizeScale: 1.0));
+    // Nearest POI (city / port / ham reference)
+    if (_nearestPoi != null) {
+      result.add((bearingDeg: _nearestPoi!.bearingDeg, color: _poiColor, sizeScale: 1.0));
     }
 
     // Navigation waypoint (non-emergency, selected from list)
@@ -1448,7 +1461,37 @@ class _HomeScreenState extends State<HomeScreen>
     ));
   }
 
-  // ── City ──────────────────────────────────────────────────────────────────
+  // ── POI section + details ───────────────────────────────────────────────────
+  Widget _poiSection(DashboardVm vm, CityVariant variant) {
+    final hit = _nearestPoi!;
+    return hit.isRef
+        ? ReferenceSection(hit: hit, vm: vm, actions: _actions, variant: variant)
+        : CitySection(hit: hit, vm: vm, actions: _actions, variant: variant);
+  }
+
+  void _showPoiDetails(PoiHit hit) {
+    if (!hit.isRef) {
+      _showCityDetails((city: hit.city!, distKm: hit.distKm, bearingDeg: hit.bearingDeg));
+      return;
+    }
+    HapticFeedback.lightImpact();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _pal.sheetBg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
+      isScrollControlled: true,
+      builder: (_) => RefDetailSheet(
+        hit: hit,
+        dayMode: _dayMode,
+        position: _position,
+        speedUnit: _speedUnit,
+        coordFormat: _coordFormat,
+        locatorType: _locatorType,
+      ),
+    );
+  }
+
   void _showCityDetails(NearestCity nc) {
     HapticFeedback.lightImpact();
     showModalBottomSheet(

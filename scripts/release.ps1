@@ -23,6 +23,15 @@ $ver = $Matches[1]; $bld = $Matches[2]
 # 3. Build the release APK.
 Push-Location $root
 try {
+    # Refresh the bundled ham-radio reference lists (best effort: on failure the
+    # previous files are kept and the build continues). $env:SKIP_REFS=1 skips it.
+    if ($env:SKIP_REFS -ne '1') {
+        dart run tool/fetch_refs.dart
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Some reference lists failed to update - previous data kept.'
+        }
+    }
+
     flutter build apk --release
     if ($LASTEXITCODE -ne 0) { throw "flutter build failed" }
 

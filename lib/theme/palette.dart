@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart' show Color, Colors;
+import '../models/poi_category.dart';
 
 /// The app's single colour source of truth.
 ///
@@ -80,6 +81,26 @@ const kDFoc    = Color(0xFF555555); // focused input border
 const kDSheetBg= Color(0xFF111111); // modal / bottom-sheet background
 const kDSnackBg= Color(0xFF1C1C1C); // floating snackbar background
 
+// Amateur-radio "on the air" programs — one distinct hue per program so the
+// nearby-POI list reads at a glance (the text tag still names the category).
+const kDSota  = Color(0xFFB388FF); // violet          — summits
+const kDGma   = Color(0xFFEA80FC); // magenta         — GMA mountains
+const kDPota  = Color(0xFF1DE9B6); // teal            — parks
+const kDWwff  = Color(0xFF82B1FF); // periwinkle      — flora & fauna
+const kDIota  = Color(0xFFF48FB1); // pink            — islands
+const kDLlota = Color(0xFF448AFF); // royal blue      — lakes & lagoons
+const kDBota  = Color(0xFFBCAAA4); // concrete tan    — bunkers
+const kDTota  = Color(0xFFB0BEC5); // blue-grey       — towers
+const kDWca   = Color(0xFFD7A86E); // castle stone    — castles
+const kDHema  = Color(0xFFD1C4E9); // pale violet     — hills (summit family)
+const kDSbw   = Color(0xFFCE93D8); // orchid          — Saxony summits (summit family)
+const kDZlota = Color(0xFF69F0AE); // fern green      — New Zealand
+const kDGia   = Color(0xFFF8BBD0); // pale pink       — GMA islands (island family)
+const kDMota  = Color(0xFFFFAB91); // brick           — mills
+const kDSiota = Color(0xFFC5E1A5); // grain green     — silos
+const kDArlhs = Color(0xFFFFF176); // beacon yellow   — lighthouses (ARLHS)
+const kDWlota = Color(0xFFE6EE9C); // pale lime       — lighthouses (WLOTA)
+
 // Shelter-quality "good" tier — mid green between kDGps and kDTrk (port info)
 const kDShelterGood = Color(0xFF9CCC65);
 
@@ -155,6 +176,45 @@ class Palette {
 
   // Ink ripple / tap highlight (kept subtle; night stays on the red ramp)
   Color get rippleMuted => day ? kDFg3 : kN2;
+
+  // Nearby-POI categories (cities, ports, ham-radio programs). Night collapses to
+  // the red ramp like every other role; the category tag carries the identity.
+  Color poi(PoiCategory c) => day ? _poiDay(c) : kN2;
+  Color poiSub(PoiCategory c) => day ? _poiSubDay(c) : kN3;
+
+  static Color _poiDay(PoiCategory c) => switch (c) {
+        PoiCategory.cityLarge    => kDCityL,
+        PoiCategory.cityRegional => kDCityP,
+        PoiCategory.cityLocal    => kDCityD,
+        PoiCategory.port         => kDPort,
+        PoiCategory.sota         => kDSota,
+        PoiCategory.gma          => kDGma,
+        PoiCategory.pota         => kDPota,
+        PoiCategory.wwff         => kDWwff,
+        PoiCategory.iota         => kDIota,
+        PoiCategory.llota        => kDLlota,
+        PoiCategory.bota         => kDBota,
+        PoiCategory.tota         => kDTota,
+        PoiCategory.wca          => kDWca,
+        PoiCategory.hema         => kDHema,
+        PoiCategory.sbw          => kDSbw,
+        PoiCategory.zlota        => kDZlota,
+        PoiCategory.gia          => kDGia,
+        PoiCategory.mota         => kDMota,
+        PoiCategory.siota        => kDSiota,
+        PoiCategory.arlhs        => kDArlhs,
+        PoiCategory.wlota        => kDWlota,
+      };
+
+  // Sub-text keeps each city tier's established companion colour; ham programs
+  // use a dimmed version of their hue.
+  static Color _poiSubDay(PoiCategory c) => switch (c) {
+        PoiCategory.cityLarge    => kDAmbs,
+        PoiCategory.cityRegional => kDAmb,
+        PoiCategory.cityLocal    => kDCityDS,
+        PoiCategory.port         => kDPortL,
+        _                        => _poiDay(c).withValues(alpha: 0.75),
+      };
 
   // Hold-to-clear / progress ring animation endpoints
   Color get ringIdle   => day ? kDEmgRingDim : kNEmgRingDim;

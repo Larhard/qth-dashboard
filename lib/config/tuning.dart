@@ -74,3 +74,15 @@ abstract final class DisplayTuning {
   static const int holdToClearMs = 3000;
   static const Duration holdToClear = Duration(milliseconds: holdToClearMs);
 }
+
+/// Nearby points of interest (cities, ports, amateur-radio references).
+abstract final class PoiTuning {
+  /// Nearby-POI list: nearest entries taken from EACH selected category…
+  static const int listPerCategory = 40;
+  /// …then merged, sorted by distance, and capped at this many rows.
+  static const int listMaxItems = 150;
+
+  /// SOTA activation-zone estimate is shown only this close to the summit — being
+  /// "high enough" on a different hill would be meaningless.
+  static const double summitZoneMaxDistKm = 3.0;
+}

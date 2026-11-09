@@ -264,6 +264,7 @@ field use. A night colour of the form `#RRGGBB` is a bug unless `GG == 00` and
 | MGRS / amber | `kDAmb`, `kDAmbs` | Amber-orange family |
 | City tiers | `kDCityL`, `kDCityP`, `kDCityD`, `kDCityDS` | Orange → lime |
 | Port / cyan | `kDPort`, `kDPortL` | Cyan |
+| Ham programs | `kDSota`, `kDGma`, `kDHema`, `kDSbw`, `kDPota`, `kDWwff`, `kDZlota`, `kDIota`, `kDGia`, `kDLlota`, `kDBota`, `kDTota`, `kDWca`, `kDMota`, `kDSiota`, `kDArlhs`, `kDWlota` | One distinct hue per program (via `Palette.poi`/`poiSub`; night → `kN2`/`kN3`) |
 | UI chrome | `kDDiv`, `kDBrd`, `kDFoc`, `kDSheetBg`, `kDSnackBg` | Dark surfaces |
 | Animation rings | `kDEmgRing`, `kDEmgRingDim`, `kNEmgRing`, `kNEmgRingDim`, `kDEmgArc`, `kNEmgArc` | Hold-to-clear animation |
 | Debug precision | `kDGpsM6`, `kDGpsM4` | Maidenhead tier colours |
@@ -329,6 +330,13 @@ should fit one of these rather than invent a new structure:
   test.
 - **Opt-in background work only** (§5.5). No sensor/CPU/network cost unless the user
   enabled a feature that needs it.
+- **Network only on an explicit user action.** The only network access is
+  `RefUpdater`, triggered by the user tapping *Update* in Settings. There is no
+  background sync, telemetry or automatic check.
+- **One parser for build and device** (`lib/refdata/`). The build tool
+  (`tool/fetch_refs.dart`) and the in-app updater use the same pure-Dart
+  parsers, so bundled and updated data cannot disagree. `models/`, `refdata/`
+  and `config/` must never import Flutter; a test enforces this.
 
 Known debt: `home_screen.dart` is a large `StatefulWidget` (a "god widget"). It is
 the one place that does not yet fit the above cleanly — see §10 for the planned
@@ -474,7 +482,8 @@ test pins.
 lib/
 ├── main.dart                    # App root; stateful theme (day/night aware)
 ├── config/
-│   └── tuning.dart              # Dart tunables: GPS cadence, display thresholds (§5.9)
+│   ├── tuning.dart              # Dart tunables: GPS cadence, display thresholds (§5.9)
+│   └── ref_sources.dart         # Ham program download URLs + attribution (pure Dart)
 ├── controllers/
 │   └── sensor_lifecycle.dart    # Owns GPS/compass/tick subscriptions + lifecycle (no BuildContext)
 ├── theme/
@@ -483,9 +492,20 @@ lib/
 │   └── display_settings.dart    # Persisted display prefs (clock, coord/locator/heading modes)
 ├── models/
 │   ├── city.dart                # City + port data model (immutable fields)
+│   ├── ham_ref.dart             # Ham reference + normalized TSV codec (pure Dart)
+│   ├── poi_category.dart        # Every POI category: city tiers, port, ham programs
+│   ├── poi_hit.dart             # One nearby result (city or reference)
 │   └── waypoint.dart            # Waypoint (mutable name/lat/lon, persistent ID)
+├── refdata/                     # PURE DART — shared with tool/fetch_refs.dart
+│   ├── csv.dart                 # Streaming RFC 4180 reader
+│   ├── parsers.dart             # One parser per program → HamRef
+│   ├── fetch.dart               # Single / multi-part download orchestration (GET injected)
+│   ├── ref_table.dart           # Columnar table + 1° grid nearest-K (antimeridian-safe)
+│   └── activation_rules.dart    # Zone / QSO reminders + summit-zone estimate
 ├── screens/
 │   ├── home_screen.dart         # Primary dashboard (large; see §10 for split plan)
+│   ├── settings_screen.dart     # POI category switches + reference data updates
+│   ├── nearby_poi_screen.dart   # Nearest-first POI list (reached via waypoints ⋮ menu)
 │   ├── waypoints_screen.dart    # Waypoint list + GPX import/export + anchor setup
 │   ├── about_screen.dart        # Legal notices + open-source licences
 │   └── debug_screen.dart        # 4-tab sensor/GPS/heading/locator debug view
@@ -495,6 +515,9 @@ lib/
 │   ├── declination_service.dart # WMM magnetic declination via Android GeomagneticField
 │   ├── environment_service.dart # EventChannel wrapper for sensor stream
 │   ├── overlay_service.dart     # Floating-compass overlay controller (see §9)
+│   ├── poi_service.dart         # Enabled/current POI category, nearest, nearby list
+│   ├── reference_service.dart   # Bundled vs downloaded ref lists; lazy isolate parse
+│   ├── ref_updater.dart         # On-device update — the ONLY network access
 │   └── waypoint_service.dart    # MOB + nav waypoints; GPX import with dedup + undo
 └── utils/
     ├── anchor_math.dart         # Pure anchor alarm level SPEC (unit-tested; native is authority)
@@ -528,6 +551,7 @@ concern into `theme/palette.dart`, `utils/formatting.dart`, and
 |---|---|---|
 | `config/`, `theme/`, `settings/` | Dart core, `flutter` (Color/GetStorage) | Services, screens, widgets |
 | `models/` | Dart core only | Services, screens, widgets |
+| `refdata/` | Dart core, `models/`, `config/` | Flutter, `dart:io`, services, screens |
 | `utils/` | Dart core, `xml`, `config/`/`theme/`/`settings/` | Services, models, screens |
 | `services/` | `models/`, `utils/`, `flutter/services` | Screens, widgets |
 | `controllers/` | `config/`/`utils/`, platform plugins | Screens, widgets, `BuildContext` |
@@ -681,6 +705,11 @@ The test suite (`test/`) MUST stay green before any release build:
   and every `Palette` night role has g = 0, b = 0) + `Palette` resolver behaviour.
 - `formatting_test.dart` — speed/distance/altitude/elapsed unit conversions & rounding.
 - `tuning_sync_test.dart` — guards the Dart↔Kotlin shared thresholds (§5.10).
+- `ref_parsers_test.dart` — every program parser against a fixture (a guard fails
+  if a parser has none), CSV edge cases, multi-part fetch (dedupe, failed parts).
+- `ref_table_test.dart` — nearest-K vs brute force incl. antimeridian/poles, every
+  program has activation rules, summit-zone estimate, POI cycling, and the
+  "shared ref-data layer stays Flutter-free" guard.
 
 New safety-relevant logic must ship with tests. Prefer extracting a pure function
 over testing through a widget or platform channel. When a rule in this document is

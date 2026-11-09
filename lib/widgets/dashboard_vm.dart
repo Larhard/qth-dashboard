@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart' show ValueListenable, immutable;
 import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
-import '../services/city_service.dart' show NearestCity;
+import '../models/poi_hit.dart';
 import '../settings/display_settings.dart';
 import '../utils/formatting.dart' show SpeedUnit;
 
@@ -13,7 +13,7 @@ import '../utils/formatting.dart' show SpeedUnit;
 /// individual parameters, so the screen↔section boundary is one clear contract.
 ///
 /// Sections derive their own *trivial* palette colours from `vm.dayMode`; the VM
-/// carries only the colours that need screen-side logic (heading source, city tier).
+/// carries only the colours that need screen-side logic (heading source, POI category).
 
 /// Which card a hold-to-clear gesture targets (MOB vs nav waypoint).
 enum WptHoldTarget { emergency, nav }
@@ -26,13 +26,14 @@ class DashboardActions {
   final VoidCallback toggleLocatorType;
   final VoidCallback toggleTimeZone;
   final VoidCallback cycleSpeedUnit;
-  final VoidCallback toggleCityMode;
+  /// Long-press on the POI section: next active category.
+  final VoidCallback cyclePoi;
   final VoidCallback toggleGpsLock;
   final VoidCallback togglePocketLock;
   final VoidCallback openWaypoints;
   final VoidCallback addMob;
   final void Function(String text) copy;
-  final void Function(NearestCity nc) showCityDetails;
+  final void Function(PoiHit hit) showPoiDetails;
   final void Function(WptHoldTarget target) startClear;
   final VoidCallback cancelClear;
 
@@ -43,13 +44,13 @@ class DashboardActions {
     required this.toggleLocatorType,
     required this.toggleTimeZone,
     required this.cycleSpeedUnit,
-    required this.toggleCityMode,
+    required this.cyclePoi,
     required this.toggleGpsLock,
     required this.togglePocketLock,
     required this.openWaypoints,
     required this.addMob,
     required this.copy,
-    required this.showCityDetails,
+    required this.showPoiDetails,
     required this.startClear,
     required this.cancelClear,
   });
@@ -84,10 +85,11 @@ class DashboardVm {
   final ValueListenable<double> compassNotifier;
   final List<({double bearingDeg, Color color, double sizeScale})> markers;
 
-  // Nearest city.
-  final NearestCity? nearestCity;
-  final Color cityColor;
-  final Color citySubColor;
+  // Nearest point of interest of the current category (city, port, or ham
+  // reference); null while nothing is active or a reference table is loading.
+  final PoiHit? nearestPoi;
+  final Color poiColor;
+  final Color poiSubColor;
 
   // Coordinate / locator / clock display caches.
   final String latStr;
@@ -120,9 +122,9 @@ class DashboardVm {
     required this.lastValidGpsHeading,
     required this.compassNotifier,
     required this.markers,
-    required this.nearestCity,
-    required this.cityColor,
-    required this.citySubColor,
+    required this.nearestPoi,
+    required this.poiColor,
+    required this.poiSubColor,
     required this.latStr,
     required this.lonStr,
     required this.locStr,

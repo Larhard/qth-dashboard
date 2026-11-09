@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart' show Color, Colors;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qth_dashboard/models/poi_category.dart';
 import 'package:qth_dashboard/theme/palette.dart';
 
 /// Returns true when a colour is "pure red or black": green and blue channels
@@ -40,6 +41,11 @@ void main() {
         'divider': p.divider, 'border': p.border, 'focus': p.focus,
         'rippleMuted': p.rippleMuted,
         'ringIdle': p.ringIdle, 'ringActive': p.ringActive, 'ringArc': p.ringArc,
+        // Nearby-POI category colours (every city tier and ham program).
+        for (final c in PoiCategory.values) ...{
+          'poi(${c.id})': p.poi(c),
+          'poiSub(${c.id})': p.poiSub(c),
+        },
       };
       final leaks = roles.entries
           .where((e) => !_pureRedOrBlack(e.value))
@@ -48,6 +54,12 @@ void main() {
       expect(leaks, isEmpty,
           reason: 'these night roles leak green/blue light: $leaks');
     });
+  });
+
+  test('every POI category has a distinct day colour', () {
+    const p = Palette(true);
+    final colours = {for (final c in PoiCategory.values) p.poi(c).toARGB32()};
+    expect(colours.length, PoiCategory.values.length);
   });
 
   group('Palette resolver behaviour', () {

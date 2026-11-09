@@ -42,20 +42,55 @@ Two display modes — long-press the arrow/rose to toggle:
 - Tap coordinates or locator to copy to clipboard
 - GPS-calibrated clock (UTC or local — long-press to switch), altitude, and accuracy
 
-### Nearest city / port
+### Nearby POI (cities, ports, ham-radio references)
 
-Four precision levels, cycled by tapping the city section:
+The POI section on the dashboard shows the nearest point of interest of the
+**current category**. **Long-press** it to cycle through the enabled categories;
+**tap** it to copy the coordinates (`lat, lon`, pastes into any map app); the
+**ⓘ** button opens the full detail sheet.
 
-| Mode | Dataset | Coverage |
-|------|---------|----------|
-| Large | Top 5 000 cities | Global overview |
-| Precise | Cities ≥ 5 000 pop. | Regional |
-| Detailed | Cities ≥ 1 000 pop. | Local |
-| Port | WPI + GeoNames harbours / marinas | Maritime |
+| Category | Tag | Dataset |
+|----------|-----|---------|
+| Cities — large | METRO | Top 5 000 cities (GeoNames) |
+| Cities — regional | CITY | Cities ≥ 5 000 pop. |
+| Towns — local | TOWN | Cities ≥ 1 000 pop. |
+| Ports & marinas | PORT | WPI + GeoNames harbours / marinas |
+| SOTA | SOTA | Summits On The Air |
+| GMA | GMA | Global Mountain Activity (GMA-only refs; SOTA summits also count) |
+| HEMA | HEMA | HuMPs Excluding Marilyns (smaller hills) |
+| SBW | SBW | Sächsischer Bergwettbewerb (Saxony summits) |
+| POTA | POTA | Parks On The Air |
+| WWFF | WWFF | World Wide Flora & Fauna |
+| ZLOTA | ZLOTA | New Zealand On The Air: huts, lakes, islands, parks, volcanoes, lighthouses |
+| IOTA | IOTA | Islands On The Air (group centre + bounding box) |
+| GIA | GIA | GMA Global Island Activity (mostly European inland islands) |
+| LLOTA | LLOTA | Lagoons & Lakes On The Air |
+| BOTA | BOTA | Worldwide Bunkers On The Air |
+| TOTA | TOTA | Towers On The Air (rozhledny.eu) |
+| COTA | WCA | World Castles Award (castles with known coordinates) |
+| MOTA | MOTA | Mills On The Air (GMA) |
+| SiOTA | SIOTA | Silos On The Air (Australia) |
+| ARLHS | ARLHS | ARLHS World List of Lights (also shows ILLW / WLOTA cross-refs) |
+| WLOTA | WLOTA | World Lighthouses On The Air |
 
-Modes with no data loaded (setup scripts not yet run) are skipped automatically.
-In **Port mode**, VHF working channel and radio call sign are shown when available; tap VHF to copy.
-Long-press the city name to open a full detail sheet (coordinates, bearing, port facilities, links).
+For ham references the section shows the reference code and name (e.g.
+`SP/BZ-005 Turbacz`), and compact pictogram chips. The chips show points (and
+any seasonal bonus), the activation zone (vertical ±25 m, a radius, inside the
+area, or on the island), and the QSOs needed. Near a SOTA/GMA summit (≤ 3 km)
+the app also estimates whether you are inside the activation zone from GPS
+altitude (MSL). This is approximate, ±10–20 m. Each program's own rules are
+authoritative; the detail sheet links to them.
+
+- **Settings & reference data** (waypoints screen → ⋮ menu): turn each
+  category, including every city size, on or off. The same screen updates the
+  reference lists over the network or reverts them to the built-in copy.
+- **Nearby POI list** (waypoints screen → ⋮ menu): pick categories (cities
+  too) and see POIs sorted nearest-first. Tap a row to copy its coordinates;
+  long-press a row (or tap ⓘ) for details.
+
+Categories with no data (setup scripts not yet run) are skipped automatically.
+In **Port mode**, the VHF working channel and radio call sign are shown when
+available.
 
 ### Waypoints and MOB
 
@@ -161,15 +196,27 @@ qth_helper/
 ├── lib/
 │   ├── main.dart                    # App entry; mode-aware Material theme
 │   ├── config/tuning.dart           # Dart tunables (GPS cadence, display thresholds)
+│   ├── config/ref_sources.dart      # Download URLs + attribution per ham program
 │   ├── theme/palette.dart           # kD*/kN* colours + Palette semantic resolver
 │   ├── settings/display_settings.dart # Persisted display preferences
 │   ├── models/
 │   │   ├── city.dart
+│   │   ├── ham_ref.dart             # Ham reference + normalized TSV codec
+│   │   ├── poi_category.dart        # Every POI category (city tiers, port, programs)
+│   │   ├── poi_hit.dart             # One nearby result (city or reference)
 │   │   └── waypoint.dart
+│   ├── refdata/                     # Pure Dart, shared with tool/fetch_refs.dart
+│   │   ├── csv.dart                 # Streaming RFC 4180 reader
+│   │   ├── parsers.dart             # Upstream format → HamRef, one per program
+│   │   ├── fetch.dart               # Download orchestration (single / multi-part)
+│   │   ├── ref_table.dart           # Columnar table + 1° grid nearest-K search
+│   │   └── activation_rules.dart    # Zone / QSO reminders + summit-zone estimate
 │   ├── screens/
 │   │   ├── home_screen.dart         # Main navigation display
 │   │   ├── waypoints_screen.dart    # Waypoint list, GPX import/export, anchor setup
 │   │   ├── about_screen.dart        # Legal notices and open-source licences
+│   │   ├── settings_screen.dart     # POI category switches + reference data updates
+│   │   ├── nearby_poi_screen.dart   # Nearest-first POI list with category filter
 │   │   └── debug_screen.dart        # 4-tab sensor / GPS / heading debug view
 │   ├── services/
 │   │   ├── anchor_service.dart      # Anchor-alarm presenter (polls native snapshot)
@@ -177,6 +224,9 @@ qth_helper/
 │   │   ├── declination_service.dart
 │   │   ├── environment_service.dart # Sensor stream (proximity, env, motion)
 │   │   ├── overlay_service.dart     # Floating-compass overlay controller
+│   │   ├── poi_service.dart         # Enabled/current POI category, nearest, nearby
+│   │   ├── reference_service.dart   # Bundled vs downloaded lists, lazy isolate load
+│   │   ├── ref_updater.dart         # On-device "Update" (the only network use)
 │   │   └── waypoint_service.dart    # MOB + nav waypoints, GPX import, undo
 │   └── utils/
 │       ├── anchor_math.dart         # Pure anchor-alarm level spec (unit-tested)
@@ -203,9 +253,12 @@ qth_helper/
 │   ├── cities_precise.tsv           # gitignored — create with fetch_cities.py
 │   ├── cities_detailed.tsv          # gitignored — create with fetch_cities.py
 │   ├── ports.tsv                    # gitignored — create with fetch_ports.py
+│   ├── refs/                        # gitignored *.tsv + manifest — fetch_refs.(ps1|sh)
 │   └── icon/                        # App icon PNGs — committed
+├── tool/fetch_refs.dart             # Builds assets/refs/ with the app's own parsers
 └── scripts/
     ├── create_stubs.py              # Placeholder assets (no internet needed)
+    ├── fetch_refs.ps1 / .sh         # Wrappers for tool/fetch_refs.dart
     ├── fetch_cities.py              # Downloads GeoNames city datasets
     ├── fetch_ports.py               # Downloads NGA WPI + GeoNames + OSM ports
     └── generate_icon.py             # Generates icon via Pillow
@@ -358,6 +411,30 @@ python3 scripts/fetch_ports.py --wpi-file "/path/to/UpdatedPub150.csv" --user YO
 
 ---
 
+### Download ham-radio reference lists (recommended, ~35 MB)
+
+```bash
+# Windows
+.\scripts\fetch_refs.ps1
+# Linux / macOS
+./scripts/fetch_refs.sh
+# A subset, or from a file you downloaded yourself:
+./scripts/fetch_refs.sh --only sota,pota
+./scripts/fetch_refs.sh --from-file sota=/path/to/summitslist.csv
+# Re-clean the existing files after a codec change (no network):
+./scripts/fetch_refs.sh --renormalize
+```
+
+The script writes `assets/refs/<program>.tsv` and `manifest.json`, which are
+bundled into the next build. It uses the same parsers as the in-app updater.
+If a program fails, its previous file is kept and the script exits with code 1.
+Names are cleaned while writing: some sources (GMA's map service in particular)
+serve double-encoded UTF-8 such as `KÄ™pa` for `Kępa`, and HTML entities. The
+shared codec repairs these, so downloads made in the app are cleaned the same way.
+The release scripts run it automatically before building. Set `SKIP_REFS=1`
+to skip it, for example when offline. GMA and WCA are fetched politely, one
+region or prefix at a time, about 830 requests in total.
+
 ### Regenerate app icon (optional)
 
 Pre-generated icons are committed to the repo. Regenerate only if you change `generate_icon.py`:
@@ -382,10 +459,13 @@ dart run flutter_launcher_icons
 | `FOREGROUND_SERVICE_SPECIAL_USE` | Floating compass overlay | Android API 34+ |
 | `SYSTEM_ALERT_WINDOW` | Floating compass overlay | Granted via system settings on first enable |
 | `VIBRATE` / camera flash | Anchor alarm | Vibration + flashlight strobe during alarm |
+| `INTERNET` | Only when you tap **Update** in Settings → Reference data | Download fresh ham-radio reference lists |
 
 The core navigation features work with only the first three permissions. The
 anchor alarm and floating overlay request the additional ones when enabled.
-The app never uses a network connection.
+The app uses the network **only** when you explicitly tap *Update* for
+reference data in Settings. Nothing is fetched in the background and no data
+is sent anywhere.
 
 ---
 
@@ -412,10 +492,24 @@ The app never uses a network connection.
 | `assets/cities_precise.tsv` | No (gitignored) | CC BY 4.0 | GeoNames via `fetch_cities.py` |
 | `assets/cities_detailed.tsv` | No (gitignored) | CC BY 4.0 | GeoNames via `fetch_cities.py` |
 | `assets/ports.tsv` | No (gitignored) | PD + CC BY 4.0 + ODbL* | NGA WPI + GeoNames + OSM via `fetch_ports.py` |
+| `assets/refs/*.tsv` | No (gitignored) | Program terms — see below | 17 programs via `fetch_refs` (sources in `lib/config/ref_sources.dart`) |
 | Source code | Yes | MIT | This project |
 | App icon | Yes | MIT | This project |
 
 \* `ports.tsv` is an **ODbL Derived Database** when generated with `--countries` (OSM inland marina data).
+
+Ham-radio reference lists are downloaded from each program's official
+public list; sources and attributions are in `lib/config/ref_sources.dart` and
+on the in-app licences page. **Their redistribution terms have not been
+verified.** Check each program's terms before publishing an APK that bundles
+them. GMA and WCA come from GMA's public map endpoints, which are not a
+documented API and may change; the same service supplies MOTA, GIA, SBW,
+ARLHS and WLOTA, and its site footer states CC BY-SA. SiOTA's terms assert
+copyright and forbid commercial use without agreement. ARLHS states
+"Copyright ARLHS, LLC". HEMA has no export, so its public pages are read
+(about 225 requests per update). ZLOTA comes from the ontheair.nz public API.
+Beaches On The Air (no public list) and ILLW (no reliable coordinates) are
+not included; ARLHS entries show their ILLW numbers.
 
 Full licence text: [LICENSE](LICENSE) · Third-party notices: [NOTICES](NOTICES)
 
@@ -426,5 +520,6 @@ Full licence text: [LICENSE](LICENSE) · Third-party notices: [NOTICES](NOTICES)
 - **Magnetic declination** uses Android's `GeomagneticField` (WMM). Accuracy degrades between model update cycles (every 5 years) and at high latitudes.
 - **GPS course** is only used above 5.4 km/h. Below that, the magnetic compass is primary and is susceptible to nearby metal or magnetic fields (e.g. a car-mount magnet).
 - **TRK** requires ~80 m of movement to stabilise after a direction change, and at least two GPS fixes to initialise.
+- **Ham-radio references** are snapshots as of the build or the last in-app update. IOTA positions are group centres, not islands. WCA covers only castles that GMA has coordinates for, a fraction of the full WCA list. Activation-zone chips are reminders, not rule checks.
 - **City and port databases** are static snapshots. Port communication data (VHF channels, phone numbers) comes from the NGA WPI; accuracy depends on the publication date.
 - **Pocket lock** uses brightness + touch-blocking, not a device lock. The screen dims to black and touch is disabled, but the keyguard remains normal so biometric unlock works immediately when the phone is taken out of the pocket.

@@ -214,6 +214,40 @@ class CityService {
     return _nearestInGrid(grid, lat, lon);
   }
 
+  /// The [k] nearest entries of [mode], nearest first (nearby-POI list).
+  List<NearestCity> nearestKForMode(double lat, double lon, CityMode mode, int k) {
+    final grid = switch (mode) {
+      CityMode.large    => _largeGrid,
+      CityMode.precise  => _preciseGrid,
+      CityMode.detailed => _detailedGrid,
+      CityMode.port     => _portGrid,
+    };
+    if (grid.isEmpty || k <= 0) return const [];
+    final latBin = (lat / _cellDeg).floor();
+    final lonBin = (lon / _cellDeg).floor();
+    final cand = <({City city, double d})>[];
+    for (int ring = 0; ring <= 12; ring++) {
+      for (int dlat = -ring; dlat <= ring; dlat++) {
+        for (int dlon = -ring; dlon <= ring; dlon++) {
+          if (ring > 0 && dlat.abs() < ring && dlon.abs() < ring) continue;
+          for (final c in grid[_cellKey(latBin + dlat, lonBin + dlon)] ?? const <City>[]) {
+            cand.add((city: c, d: haversineKm(lat, lon, c.lat, c.lon)));
+          }
+        }
+      }
+      if (cand.length >= k) {
+        cand.sort((a, b) => a.d.compareTo(b.d));
+        // Same 55 km/° bound as nearest(): exact below ~60° latitude.
+        if (cand[k - 1].d < ring * _cellDeg * 55.0) break;
+      }
+    }
+    cand.sort((a, b) => a.d.compareTo(b.d));
+    return [
+      for (final c in cand.take(k))
+        (city: c.city, distKm: c.d, bearingDeg: bearing(lat, lon, c.city.lat, c.city.lon)),
+    ];
+  }
+
   static NearestCity? _nearestInGrid(
       Map<int, List<City>> grid, double lat, double lon) {
     final latBin = (lat / _cellDeg).floor();
