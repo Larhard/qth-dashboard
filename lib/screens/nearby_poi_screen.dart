@@ -7,6 +7,7 @@ import '../models/poi_category.dart';
 import '../models/poi_hit.dart';
 import '../services/poi_service.dart';
 import '../services/reference_service.dart';
+import '../services/waypoint_service.dart';
 import '../settings/display_settings.dart';
 import '../theme/palette.dart';
 import '../utils/formatting.dart';
@@ -18,7 +19,11 @@ import '../widgets/ref_detail_sheet.dart';
 /// Every nearby point of interest, nearest first, across the categories the
 /// user picks (cities, ports, SOTA, POTA…). Reached from the Waypoints screen
 /// menu — not from the dashboard. Tap a row to copy its coordinates; ⓘ for the
-/// detail sheet.
+/// detail sheet; the navigate button makes the POI the active waypoint (saved
+/// to the waypoint list, like any other) and returns to the dashboard.
+///
+/// Pops with `true` when a navigation target was set, so the Waypoints screen
+/// can close too.
 class NearbyPoiScreen extends StatefulWidget {
   final Position? position;
   final bool dayMode;
@@ -103,6 +108,12 @@ class _NearbyPoiScreenState extends State<NearbyPoiScreen> {
         behavior: SnackBarBehavior.floating,
         duration: const Duration(milliseconds: 1400),
       ));
+  }
+
+  void _navigate(PoiHit h) {
+    HapticFeedback.mediumImpact();
+    WaypointService.instance.navigateTo(h.label, h.lat, h.lon);
+    Navigator.pop(context, true);
   }
 
   void _details(PoiHit h) {
@@ -199,6 +210,11 @@ class _NearbyPoiScreenState extends State<NearbyPoiScreen> {
                 style: TextStyle(fontSize: 12, color: sub,
                     fontFeatures: const [FontFeature.tabularFigures()])),
           ]),
+          IconButton(
+            tooltip: 'Navigate here (set as waypoint)',
+            icon: Icon(Icons.navigation_outlined, size: 22, color: color),
+            onPressed: () => _navigate(h),
+          ),
           IconButton(
             tooltip: 'Details',
             icon: Icon(Icons.info_outline, size: 20, color: sub),

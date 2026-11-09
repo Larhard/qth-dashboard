@@ -97,6 +97,19 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   }
 
   // ── Floating overlay toggle ───────────────────────────────────────────────
+  /// Nearby POI list. If a POI was picked as the navigation target, close this
+  /// screen too and tell the dashboard to refresh (same as tapping a waypoint).
+  Future<void> _openNearby() async {
+    final picked = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => NearbyPoiScreen(
+          position: widget.currentPosition,
+          dayMode: widget.dayMode,
+          speedUnit: widget.speedUnit,
+          coordFormat: widget.coordFormat,
+          locatorType: widget.locatorType,
+        )));
+    if (picked == true && mounted) Navigator.pop(context, true);
+  }
+
   Future<void> _toggleOverlay() async {
     final oc = OverlayController.instance;
     if (oc.enabled) {
@@ -338,13 +351,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           case 'export': _exportGpx();
           case 'overlay': _toggleOverlay();
           case 'nearby':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => NearbyPoiScreen(
-                  position: widget.currentPosition,
-                  dayMode: widget.dayMode,
-                  speedUnit: widget.speedUnit,
-                  coordFormat: widget.coordFormat,
-                  locatorType: widget.locatorType,
-                )));
+            _openNearby();
           case 'settings':
             Navigator.push(context,
                 MaterialPageRoute(builder: (_) => SettingsScreen(dayMode: widget.dayMode)));

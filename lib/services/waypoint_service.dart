@@ -105,6 +105,23 @@ class WaypointService {
     return w;
   }
 
+  /// Navigate to a point picked elsewhere (Nearby POI list): reuses a saved
+  /// waypoint with the same name at the same spot (~1 m), otherwise adds one,
+  /// and makes it the active navigation target. MOB tracking is unaffected.
+  Waypoint navigateTo(String name, double lat, double lon) {
+    final n = name.trim();
+    Waypoint? w;
+    for (final e in _waypoints) {
+      if (!e.isEmergency && e.name == n && (e.lat - lat).abs() < 1e-5 && (e.lon - lon).abs() < 1e-5) {
+        w = e;
+        break;
+      }
+    }
+    w ??= addManual(n, lat, lon);
+    setActive(w.id);
+    return w;
+  }
+
   /// Set a navigation target from the waypoints list.
   /// Does NOT affect the emergency (MOB) tracking.
   void setActive(String id) {
